@@ -11,6 +11,10 @@ Ready (built or checked without a board):
 - GPU driver `pvrsrvkm` (Android flavour, DDK 24.2@6643903) and the matching firmware `rgx.fw` / `rgx.sh` (36.56.104.183). The driver and blobs match (script 25 PASS).
 - redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. **Never booted.**
 - Scripts: `40-board-setup.sh` (kernel, run), `45-usb-net.sh` (USB Ethernet), `50-board-report.sh` (PASS / WARN / FAIL report).
+- Two GPU routes, tested in this order (README section 16.6):
+  - **Route L** (host): the Orange Pi 6.6 PowerVR driver, module `powervr.ko`, with Allwinner's open-source firmware `powervr/rogue_36.56.104.183_v1.fw`. This is the first GPU test. Built 2026-10-28 on the build PC (`out/route-l/`), with three helper modules (`gpu-sched`, `drm_shmem_helper`, `drm_exec`). Not run.
+  - **Route A** (redroid): the kit's Android `pvrsrvkm` (DDK 24.2@6643903) with `rgx.fw` / `rgx.sh` 36.56.104.183.
+- The Debian server image has no PowerVR driver: its kernel config has `CONFIG_AW_DRM_POWERVR` off, and it ships no firmware. The same option is off in every Orange Pi config we checked, so Route L is untested on this board.
 
 Only the board can decide:
 
@@ -32,13 +36,21 @@ Only the board can decide:
 
 ## 3. Steps
 
-1. **Flash the OS.** Write Orange Pi Debian bookworm "current" (6.6) to the SD card from the Orange Pi download page. Power on with the serial adapter attached and log in as the default `orangepi` user.
-2. **Note the stock kernel.** `uname -r` shows the stock 6.6 kernel. This is the rollback target.
+1. **Flash the OS.** Write the Orange Pi Debian trixie 1.0.2 server image (`Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z`; Debian 13.6, kernel 6.6.98-sun60iw2) to the SD card. Check the extracted `.img` against the shipped `.sha`. Power on with the serial adapter attached and log in as the default `orangepi` user.
+2. **Back up the stock kernel.** Run `sudo tar -C / -cpf ~/stock-kernel-backup.tar boot usr/lib/modules/6.6.98-sun60iw2`, and copy the tar off the card if you can. The image's apt lists have no Orange Pi kernel index, so this tar is the only rollback.
 3. **Copy the kit** (from the build PC, or from the laptop copy). Replace `<ip>` with the board's address:
    ```bash
-   rsync -a out/deploy out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
+   rsync -a out/deploy out/route-l out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
+4b. **GPU first, Route L (README 16.6).** Prove the GPU on the host before the redroid run:
+   - Read the power-domain state: `sudo devmem 0x07065008` (PD 5, GPU_TOP) and `sudo devmem 0x07066008` (PD 6, GPU_CORE). `0x8` means on. `devmem` may need `sudo apt install busybox` or `devmem2`.
+   - Install the firmware: `sudo install -D -m 0644 rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`. This is the libgpu file, sha256 `3974e79f…`.
+   - Install the modules, once per board: `sudo mkdir -p /lib/modules/6.6.98-sun60iw2-redroid/extra && sudo cp ~/farm/route-l/*.ko /lib/modules/6.6.98-sun60iw2-redroid/extra/ && sudo depmod -a`. Check `uname -r` first, and `cd ~/farm/route-l && sha256sum -c SHA256SUMS` after the copy.
+   - Load the module: `sudo modprobe powervr`. It is built on the build PC against this kernel (`out/route-l/`, not run yet). `modprobe` loads the three helpers first.
+   - Check: `dmesg | grep -i -E 'powervr|loaded firmware|FW version|deferring'`, `ls /dev/dri`, and `cat /sys/kernel/debug/dri/*/name` (expect `powervr`).
+   - Expect `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`, plus a `renderD128` node.
+   - Unload before step 5: `sudo rmmod powervr`. Both drivers bind `img,gpu`.
 5. **Start the stack.** `./40-board-setup.sh run`. It installs the GPU driver and firmware, loads the image, sets the CPU and memory layout, and starts two instances (`android1` on adb port 5555, `android2` on 5556).
 6. **Read the report.** `./50-board-report.sh`. Each line is PASS, WARN or FAIL. The evidence (dmesg, logcat, SurfaceFlinger dump, props) is saved under `~/farm/reports/<time>/`.
 7. **Look from the laptop.** `adb connect <ip>:5555` and `adb connect <ip>:5556`, then `adb -s <ip>:5555 shell getprop ro.hardware.egl` and `adb exec-out screencap -p > s1.png`.
@@ -50,6 +62,8 @@ Only the board can decide:
 - **FAIL** anything else: send the report folder.
 
 Expected values, for comparison: the DRM device is named `pvr`; SurfaceFlinger shows `PowerVR B-Series BXM-4-64` with `OpenGL ES 3.2 build 24.2@6643903`.
+
+For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`. If the firmware loads but there is no `renderD128` node, the probe failed after the load: read `dmesg` from that point.
 
 ## 5. If something fails (first moves)
 
@@ -63,18 +77,33 @@ Expected values, for comparison: the DRM device is named `pvr`; SurfaceFlinger s
 | Containers do not reach `boot_completed` | Check `docker logs android1` and `adb logcat`. Try the software fallback below. |
 | Second instance slow or killed | Stop it (`sudo docker rm -f android2`), check `free -m` and `docker stats`. |
 | USB Ethernet gives no link | `lsusb`, then `dmesg | grep -i -E "rtl|r8152"`, then `sudo modprobe r8152`. |
+| `deferring` in dmesg after `modprobe powervr` | The firmware file is missing or in the wrong path. Check `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). |
+| `Unsupported fw info version 2` or `FW info format mismatch` | Wrong firmware file. The Radxa and Android `rgx.fw` copies are info v2 and are not for Route L. |
+| `FW built for incorrect GPU ID` | Firmware for another BVNC. Route L needs 36.56.104.183. |
+| Board hangs when the GPU starts (Route A) | Likely an SError from a blocked secure-register write. Run Route L first and keep the serial log. |
+| PD 5 or PD 6 reads `0x0` after probe | The power domain is off, so the GPU is unpowered. Check the PCK-600 probe in `dmesg`. |
+| `Module gpu-sched not found` (or `drm_exec`, `drm_shmem_helper`) after `modprobe powervr` | Step 4b's copy and `sudo depmod -a` were skipped, or the copy went to another kernel's directory. Check `uname -r`. |
+| `Unknown symbol` or `version magic` from `modprobe powervr`, or the same in `dmesg` | The module was built for another kernel. `modinfo -F vermagic /lib/modules/$(uname -r)/extra/powervr.ko` must say `6.6.98-sun60iw2-redroid`. |
 
 **Software fallback (GPU not working).** Edit `40-board-setup.sh`: change `androidboot.redroid_gpu_mode=host` to `guest` in the `docker run` lines, then `sudo docker rm -f android1 android2` and `./40-board-setup.sh run`. Everything except the GPU still gets tested.
 
-**Rollback.** `sudo apt install --reinstall linux-image-current-sun60iw2 && sudo reboot`. If the board will not boot at all, reflash the stock image (step 1).
+**Rollback.** `sudo tar -C / -xpf ~/stock-kernel-backup.tar && sudo reboot`. If the board will not boot at all, reflash the stock image (step 1).
 
 ## 6. What to send back
 
 - the report folder `~/farm/reports/<time>/`;
 - the serial log of the first boot after step 4, and of the first boot after step 5 if there were problems;
 - the output of `uname -r` and `sudo dmesg | tail -100` if anything failed.
+- For Route L: `dmesg | grep -i -E 'powervr|rogue|FW version|deferring|loaded firmware'`, `cat /sys/kernel/debug/dri/*/name`, and the PD 5 and PD 6 `devmem` readbacks.
 
 ## 7. Not in scope for this session
 
-- eMMC: not needed for the SD boot. For eMMC day, the device tree is prepared: `out/zero3w-emmc/sun60i-a733-orangepi-zero3w-emmc.dtb`, with the change in `config/zero3w-emmc-supplies.patch`. VCC comes from DC-DC1 at 3.3 V (`reg_dc1sw2`, the SD card's rail). VCCQ comes from `reg_cldo1` at 1.8 V; confirm it with a meter on the eMMC VCCQ pad before the first boot. Do not install that DTB while the socket is empty; the MMC core would retry the missing chip and may slow the boot.
+- eMMC: not needed for the SD boot. For eMMC day, the device tree is prepared: `out/zero3w-emmc/sun60i-a733-orangepi-zero3w-emmc.dtb`, with the change in `config/zero3w-emmc-supplies.patch`. VCC comes from DC-DC1 at 3.3 V (`reg_dc1sw2`, the SD card's rail). VCCQ comes from `reg_cldo1` at 1.8 V; confirm it with a meter on the eMMC VCCQ pad before the first boot. The stock Debian device tree already enables the eMMC controller (`sdmmc@4022000`), so an empty socket is probed on every boot with the stock tree too. The eMMC tree only adds the rails. Keep the stock tree for the SD-first boot, and install the eMMC tree once a chip is fitted and VCCQ is confirmed.
 - JTAG: not needed now. The schematic routes the JTAG pins to the 40-pin header (PB route), but boot0 and pin muxing are not verified yet.
+
+## 8. Reference images (not for the farm)
+
+- **Radxa A733 Bullseye KDE image** (`radxa-a733_bullseye_kde_r2.output_512.img.xz`, sha256 `1b5604fe…`, kernel 5.15.147-14-a733). It ships a prebuilt Linux GPU stack: the DKMS package `img-bxm-dkms` 0.1.0-2, a built `pvrsrvkm.ko.xz` for its kernel (DDK 24.2@6603887, Linux WS build), the IMG user-space libraries (24.2.6603887), and firmware 36.56.104.183. Its `rgx.sh` is byte-identical to the kit's; its `rgx.fw` is not (`43eb5d05…` against the kit's Android copy `11e08779…`). Its EGL is Mesa's. Its sunxi layer defines the DRM_CTRL register, but I found no write to it and no SMC secure-release call, so it doesn't settle the secure-reset question. Use it to compare the Linux driver and its start sequence. Do not use it as a base: the kernel is 5.15.
+- **Orange Pi Android 13 pack** (`OrangePiZero3W_A733_Android13_lcd_v1.0`): Android-flavour `pvrsrvkm`, DDK 24.2@6643903 strings, firmware 36.56.104.183, kernel 5.15.119, `buildvariant=userdebug`. Use it for the Android blobs and the device tree. Do not flash it to the farm.
+- **Allwinner libgpu** (`tina5.0_aiot/product/linux/external/libgpu`, commit `144487e8`): the open-source firmware `powervr/rogue_36.56.104.183_v1.fw` for Route L, and the DDK 6603887 userspace libraries (for the DDK kernel driver, not Route L). Mirror it with the rest.
+- Mirror the Radxa apt repo (`radxa-repo.github.io/a733-bullseye`) and keep the Orange Pi pack, before the links disappear.

@@ -27,12 +27,14 @@ Status on 2026-10-28. Everything that can be built or checked without an A733 bo
 
 ---
 
-## 1. Is there a working PowerVR stack for A733 to build on? Yes, three
+## 1. Is there a working PowerVR stack for A733 to build on? Yes, four
 
 | Stack | What it is | Where | Role here |
 |---|---|---|---|
 | **Vendor Android 13** | Allwinner's Android userspace: EGL, GLES 3.2, Vulkan, gralloc 4, OpenCL, **DDK 24.2@6643903**. Also the **kernel driver source of the same build** (MIT/GPL). | `gitlab.com/aw_android13/gpu/gpu` and `.../lichee/bsp` → `modules/gpu/img-bxm/android/rogue_km`, branch `a733-radxa-v1.0` (Radxa's public A733 Android 13 SDK) | **Plan A.** Both halves come from one build. |
-| Vendor Linux | Allwinner AIoT SDK v1.5.0 / Orange Pi Debian: DDK 24.2@6603887, Wayland/X11, GLES, Vulkan 1.3, OpenCL | `gitlab.com/tina5.0_aiot/...` and Orange Pi's kernel `bsp/` | What stock Debian loads. Wrong flavour for Android, but its newer platform glue gave us one fix (section 4). |
+| Vendor Linux (Orange Pi 6.6 BSP) | Upstream-style PowerVR driver in `bsp/drivers/gpu/imagination` (`CONFIG_AW_DRM_POWERVR`, binds `img,gpu`, manual clock-and-reset power sequence). Firmware `powervr/rogue_36.56.104.183_v1.fw` from Allwinner's libgpu. Userspace is Mesa with apercel's BVNC patch; libgpu's DDK 24.2@6603887 libraries expect the DDK kernel UAPI (section 16.7). | Orange Pi kernel `bsp/` (`2ac08e8c`) and `gitlab.com/tina5.0_aiot/product/linux/external/libgpu` (`144487e8`) | **Route L** (section 16.6): the first GPU test. The option is off in every Orange Pi config we checked, so nobody has shipped this driver here. The module builds on the build PC (2026-10-28) but has not run. |
+| AIoT rogue_km (tina5 BSP) | DDK-style Linux driver for BVNC 36.56.104.183 (`RGX_BVNC := 36.56.104.183`), DDK 24.2@6603887, with `sunxi_secure_config()` | `gitlab.com/tina5.0_aiot/lichee/bsp` → `modules/gpu/img-bxm/linux/rogue_km` (`a5fe1970`) | Origin of the secure-reset step (section 4). Not what the Orange Pi 6.6 tree builds. |
+| Radxa A733 Bullseye image (reference) | Radxa's prebuilt Linux GPU stack for A733: DKMS `img-bxm-dkms` 0.1.0-2, `pvrsrvkm.ko` for kernel 5.15.147-14-a733 (DDK 24.2@6603887, Linux WS build), IMG user-space 24.2.6603887, firmware `rgx.fw` / `rgx.sh` 36.56.104.183 | Public apt repo `radxa-repo.github.io/a733-bullseye`; image `radxa-a733_bullseye_kde_r2.output_512.img.xz` (sha256 `1b5604fe…`) | Reference only. Compare the Linux driver and its start sequence. Not a base: 5.15 kernel. Mirror the repo before it disappears. |
 | Open source | `apercel` (Oct 2026): the upstream `drm/imagination` driver built out of tree, plus a patch to Mesa 26.1.8 for BVNC 36.56.104.183. Vulkan + Zink, tested on an Orange Pi 4 Pro (A733). Linux 7.3 lists BXM-4-64 MC1 (TH1520) as supported; Mesa BXM-4-64 isn't conformant yet. | github.com/TumRedSun/apercel | Plan B (section 13), and an upstream opportunity. |
 
 Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC++): one host driver serves an Android userspace in a container (`SUPPORT_ARC_PLATFORM`). redroid does the same thing.
@@ -90,11 +92,11 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 
 ## 4. Bring-up risk found and fixed: platform glue differences
 
-The Android driver (Radxa SDK, Aug 2025) and Orange Pi's Linux driver (Allwinner v1.5.0, 2026) share the same core. Their A733 glue (`services/system/rogue/rgx_sunxi`) differs:
+The Android driver (Radxa SDK, Aug 2025) and the AIoT rogue_km (Allwinner v1.5.0, 2026) share the same core. Their A733 glue (`services/system/rogue/rgx_sunxi`) differs. The Orange Pi 6.6 driver (`bsp/drivers/gpu/imagination`) is a different, upstream-style driver with no such glue (section 16.6):
 
 | Difference | Effect on Orange Pi boards | Action |
 |---|---|---|
-| The Linux driver calls `sunxi_secure_config()` before **every** GPU start (`RGXDoStart` → `pfnTDSystemSecureConfig`). It writes `0x2` to `0x0a0000b0` (releases the GPU "DRM"/secure reset in the SMC) and `0` to `0x01880014` (`GPU_GLB.DRM_CTRL`). The older Android core has no such hook. | Without it, the GPU firmware may not boot on Orange Pi's boot firmware. | **Ported**: runs in `sunxiPrePowerState` after clocks and power are on, before `RGXStart`. |
+| The AIoT rogue_km calls `sunxi_secure_config()` before **every** GPU start (`RGXDoStart` → `pfnTDSystemSecureConfig`). It writes `0x2` to `0x0a0000b0` (releases the GPU "DRM"/secure reset in the SMC) and `0` to `0x01880014` (`GPU_GLB.DRM_CTRL`). The older Android core has no such hook. The Orange Pi 6.6 driver and the Radxa DKMS driver don't make this call. | Unverified. The step may matter only on the AIoT path. Route L will show whether the 6.6 driver boots without it. | **Ported** (Android flavour only): runs in `sunxiPrePowerState` after clocks and power are on, before `RGXStart`. Route L runs without it. |
 | GPU voltages: Linux picks `opp-microvolt-vfXXXX` by eFuse bin; Android reads plain `opp-microvolt`. | Orange Pi's DT has both. Plain = highest bin: 400/600 MHz 0.80 V, 800 MHz 0.84 V, 1008 MHz 0.96 V. | Nothing to do (safe, slightly conservative). |
 
 ## 5. redroid fit, checked against the real `redroid/redroid:13.0.0_64only` arm64 image
@@ -294,7 +296,7 @@ Why route B is worth it:
 
 ## 9. On the A733 board
 
-1. Flash Orange Pi Debian **bookworm "current" (6.6)**.
+1. Flash the Orange Pi Debian **trixie 1.0.2 server** image (`Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z`; Debian 13.6, kernel 6.6.98-sun60iw2). It has no PowerVR driver; the kit provides it.
 2. `rsync -a out/deploy out/redroid-pvr scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/`, plus `redroid-pvr-13-arm64.tar` if you built one.
 3. On the board:
    ```bash
@@ -302,9 +304,11 @@ Why route B is worth it:
    ./40-board-setup.sh run                      # GPU driver + firmware, image, 2 pinned instances
    ./50-board-report.sh                         # PASS / WARN / FAIL for section 10, evidence in ~/farm/reports/
    ```
-   - Rollback: `sudo apt install --reinstall linux-image-current-sun60iw2 && sudo reboot`.
+   - Before step 3, back up the stock kernel: `sudo tar -C / -cpf ~/stock-kernel-backup.tar boot usr/lib/modules/6.6.98-sun60iw2`.
+   - Rollback: `sudo tar -C / -xpf ~/stock-kernel-backup.tar && sudo reboot`. The image's apt lists have no Orange Pi kernel index, so apt cannot reinstall the stock kernel.
    - Instances: CPUs `1,2,5,6` / `3,4,5,7` (host stays on cpu0), `--memory=2200m` on 6 GB (1600m under 5 GB), zram 2 GB, 720×1280 at 30 fps, adb 5555/5556.
    - Board-day order, serial console and fallbacks: [BOARD-DAY.md](BOARD-DAY.md).
+   - GPU order: Route L first (section 16.6), then `40-board-setup.sh run`. Both drivers bind `img,gpu`, so unload one before loading the other.
 
 ## 10. Board checklist
 
@@ -340,7 +344,7 @@ Why route B is worth it:
 
 | Situation | JTAG value | What exactly |
 |---|---|---|
-| GPU firmware won't boot / GPU bus hang | **high** | With the cores halted, or live through a MEM-AP, read `0x0a0000b0`, `0x01880014` and the GPU registers at `0x01800000`. Compare stock Debian (Linux driver works) with ours. Shows whether the secure reset is released and whether the CPU is stuck in a GPU register access. |
+| GPU firmware won't boot / GPU bus hang | **high** | With the cores halted, or live through a MEM-AP, read `0x0a0000b0`, `0x01880014` and the GPU registers at `0x01800000`. Reference: Route L (the Orange Pi 6.6 driver, section 16.6) writes neither `0x0a0000b0`, `0x01880014` nor the PPU register `0x07066000`. The AIoT rogue_km writes the first two. Compare the two driver logs before blaming the power sequence. Shows whether the secure reset is released and whether the CPU is stuck in a GPU register access. |
 | Hard lockup / SError (e.g. a register write the secure world blocks) | **high** | Halt the A55/A76 cores and read PC/ESR/FAR when the kernel can't print anything. |
 | eMMC / UFS you soldered won't boot | **high** | Halt in boot0/SPL to see where SMHC/UFS init stops; FEL is the other half of this. |
 | Custom kernel silent at boot | medium | Halt and read the PC, or `__log_buf` from memory. Usually serial `earlycon` is enough. |
@@ -393,3 +397,117 @@ Licences:
 - Mesa PowerVR: https://docs.mesa3d.org/drivers/powervr.html
 - redroid: https://github.com/remote-android/redroid-doc (build: `android-builder-docker/`), https://github.com/remote-android/vendor_redroid
 - Docker kernel check: https://github.com/moby/moby/blob/master/contrib/check-config.sh
+- Orange Pi 6.6 kernel tree (PowerVR driver, PCK-600, CCU, board DTS): https://github.com/orangepi-xunlong/linux-orangepi
+- Orange Pi build (kernel configs): https://github.com/orangepi-xunlong/orangepi-build
+- Mainline DRM driver: https://github.com/torvalds/linux/tree/master/drivers/gpu/drm/imagination
+- Mesa PowerVR source (freedesktop, main): https://gitlab.freedesktop.org/mesa/mesa/-/tree/main/src/imagination
+- linux-riscv mailing-list archive (lists.infradead.org; the A733 CCU v5 thread in section 16.3) and linux-firmware (GitLab, `powervr/`), both checked 2026-10-28
+
+## 16. Mainline status and upstream commits (checked 2026-10-28)
+
+Checked against `torvalds/linux` (latest tag v7.3; master carries the 7.4 work), the linux-riscv archive (lists.infradead.org), linux-firmware (gitlab raw) and the apercel project. "In v7.3" means GitHub's compare against `v7.3` returned `behind`, so the commit is an ancestor of the tag. lore.kernel.org showed a bot check to this environment and linux-sunxi.org returned 403, so those two were read only through search snippets. Nothing here has run on hardware.
+
+**Bottom line.** Mainline cannot drive this A733 GPU today. It has the A733 power-domain controller and RTC clocks, and A733 pinctrl is queued for 7.4. Its PowerVR driver supports BXM-4-64 only for the TH1520's BVNC (36.52.104.182). Mainline has no A733 CCU, no A733 device tree, no A733 MMC driver, no BVNC entry for our 36.56.104.183, and no firmware for it. The Orange Pi Zero 3W is not in mainline.
+
+### 16.1 In mainline v7.3
+
+```
+a46e905cd14a0a82b6f1fbf2f720fe5f13755050  2026-03-05  pmdomain: sunxi: Add support for A733 to Allwinner PCK600 driver
+f287826fd7e406caa56692ecc39742bdb312b2e8  2026-03-05  dt-bindings: power: Add Support for Allwinner A733 PCK600 Power Domain Controller
+b462a227d8547d62b1f654bf80b3505a84746b54  2026-05-10  pmdomain: sunxi: support power domain flags for pck600
+38d6b194a21c8626647b0a773bb8db5f2b84b0ad  2026-07-06  dt-bindings: rtc: sun6i: add sun60i-a733 support
+0a136efc0fc2d53b1b1389b3c3fb0f76edca38bf  2026-07-23  clk: sunxi-ng: sun6i-rtc: add a733 support
+8dc697aabf7c49f1d40351f21e13a22ee030f508  2026-07-31  dt-bindings: mmc: sunxi: add compatible string for Allwinner A733 MMC0/1/2
+e55fead22ff9ee047ab9f1903860c4b43043514e  2026-07-20  drm/imagination: promote BXM-4-64 MC1 (36.52.104.182) to supported status
+9b33d8e063f62074b729c52b052cc306b9369714  2026-07-20  drm/imagination: update GPU support documentation
+5052d5cf1359e9057ec311788c12997406fdb2fc  2025-08-22  riscv: dts: thead: th1520: Add IMG BXM-4-64 GPU node
+337ebfda8a4f2627bf52e200cacf6f3a2f5ccf48  2025-08-22  dt-bindings: gpu: img,powervr-rogue: Add TH1520 GPU support
+6b53cf48d9339c75fa51927b0a67d8a6751066bd  2025-08-22  drm/imagination: Enable PowerVR driver for RISC-V
+d4c2d9b5b7ceed14a3a835fd969bb0699b9608d3  2025-06-23  power: sequencing: Add T-HEAD TH1520 GPU power sequencer driver
+```
+
+The PCK-600 commits give the A733 domains: `PD_GPU_TOP` = 5 and `PD_GPU_CORE` = 6. The TH1520 commits show the mainline BXM-4-64 device-tree pattern.
+
+### 16.2 Queued for 7.4 (on master, not in v7.3)
+
+```
+0535bfbfa97bd3fe43749952756ef08917b31e48  2026-09-10  pinctrl: sunxi: add support for the Allwinner A733
+3fa025dfe1e7be11ea9cd2174666d1f953a61226  2026-09-10  pinctrl: sunxi: support A733 generation MMIO register layout
+5777ddfb5f361269e26a1989c9da774e3349c639  2026-09-10  dt-bindings: pinctrl: add compatible for Allwinner A733
+0da2c96cf69df277275b3e7e57118a34b50c8177  2026-09-24  dt-bindings: i2c: mv64xxx: Add Allwinner A733 compatible string
+```
+
+The first adds `pinctrl-sun60i-a733.c`. The I2C commit is binding-only.
+
+### 16.3 Missing upstream (no commit found)
+
+| Needed | Checked | Status |
+|---|---|---|
+| A733 CCU and PRCM clock driver | `drivers/clk/sunxi-ng/` has no sun60i file | In review: "[PATCH v5 0/8] clk: sunxi-ng: Add support for Allwinner A733 CCU and PRCM" (linux-riscv archive, message 100638; patch 3/8 "clk: sunxi-ng: a733: Add PRCM CCU"). Reviewer Chen-Yu Tsai (3 Oct 2026) raised secure-by-default PLLs and bus dividers, and a secure-only TWD clock. |
+| A733 device tree and Zero 3W board DTS | no sun60i or orangepi-zero3w file in `arch/arm64/boot/dts/allwinner` | No patch found in our searches |
+| BVNC 36.56.104.183 (our GPU) | `pvr_gpu_support_level()` in `pvr_device.c` marks 33.15.11.3 (the AXE-1-16M the docs list), 36.52.104.182 (BXM-4-64, TH1520) and 36.53.104.796 (the BXS-4-64 MC1 the docs list) as supported. 36.56.104.183 is absent. | Missing. Mainline refuses unknown BVNCs unless `exp_hw_support` is set. The Orange Pi 6.6 driver has no BVNC table. Mesa's canonical tree (freedesktop GitLab, main) lists 36.52.104.182 and 36.53.104.796 only. |
+| GPU binding for A733 | `img,powervr-rogue.yaml`: no Allwinner entry | Missing. The mainline BXM-4-64 pattern is `"thead,th1520-gpu", "img,img-bxm-4-64", "img,img-rogue"`. The vendor tree and the kit's driver use `img,gpu`. |
+| GPU firmware `rogue_36.56.104.183_v1.fw` | linux-firmware `powervr/`: the TH1520's `rogue_36.52.104.182_v1.fw` returns 200, ours returns 404 | Missing upstream. Allwinner's libgpu has the file (section 16.7). |
+| A733 sunxi MMC driver | `drivers/mmc/host/sunxi-mmc.c`: no A733 match | Binding only (`8dc697aa…`) |
+| AXP318W regulators | `drivers/regulator/axp20x-regulator.c` and `drivers/mfd/axp20x.c`: no axp318w | "[PATCH v3 4/4] regulator: axp20x: add support for the AXP318W", July 2026 (lkml.iu.edu/2607.2/02884.html). The message gives no DT compatible and no test board. |
+
+### 16.4 Out of tree
+
+- **apercel** (https://github.com/TumRedSun/apercel): a kernel driver built from upstream drm/imagination for the 6.6.98-sun60iw2 BSP (module `apercel`), plus a Mesa 26.1.8 patch for BVNC 36.56.104.183. Self-reported on one board, an Orange Pi 4 Pro (A733), with the GPU at 1.008 GHz. Its power-on is `clk_parent`, `clk`, `clk_bus`, a 1 µs delay, then one `reset_control_deassert`. A grep of its driver source finds no `0x0a0000b0`, no `0x01880014` (DRM_CTRL), no `0x07066000` (PPU) and no `0x02002b20` (GPU clock register). Its README says it binds by `img,gpu`.
+- **Radxa A733 Bullseye image** (`prebuilt-image/radxa-a733_bullseye_kde_r2.output_512.img.xz`, sha256 `1b5604fe…`): ships a vendor Linux driver as DKMS package `img-bxm-dkms` 0.1.0-2 (DDK 24.2@6603887, Linux WS build), a built `pvrsrvkm.ko.xz` for kernel 5.15.147-14-a733, IMG user-space 24.2.6603887, and firmware 36.56.104.183. Its `rgx.sh` is byte-identical to the kit's. Its `rgx.fw` is not.
+
+### 16.5 What this means for us
+
+1. **The power domains are mainline-shaped.** The A733 PCK-600 driver puts each domain's PPU block at `base + 0x1000 × index`. Domain 5 (GPU_TOP) is at `0x07065000`, and domain 6 (GPU_CORE) is at `0x07066000`, the address the kit writes `0x8` to (`PPU_PWPR`, `POWER_MODE_ON`). The Zero 3W tree requests domain 5 only. The Orange Pi 6.6 SoC DT keeps its GPU_CORE node commented out, and Route L doesn't need GPU_CORE. The Android path does the manual write, as the vendor Android does. Board check: read `PPU_PWSR` (+0x8, bits 3:0) at `0x07065008` and `0x07066008`; `0x8` means on. Read both before loading the driver and after the write.
+2. **The minimal sequence is the vendor's Linux one.** The Orange Pi 6.6 driver powers the GPU with `clk_parent`, `clk` and `clk_bus`, a 1 µs delay, then one reset deassert: the same code apercel uses. No PPU, secure or bit-27 write. Route L tests that path on our board. The Android path keeps the writes the vendor Android and AIoT code make.
+3. **Secure-by-default clocks.** The CCU review says the A733's PLLs and bus dividers are secure by default, and asks whether things work only because secure boot is not enforced. One tester reports the registers work on a Radxa Cubie A7S without secure boot. Those measurements are AI-assisted, and the author asks that they not count as Tested-by.
+4. **PMIC naming is unresolved.** Every vendor device tree we checked defines `x-powers,axp8191`: both Orange Pi trees, and Radxa's Cubie A7A, A7S and A7Z. The schematic and the July 2026 patch say AXP318W. Nothing we found proves they are the same die.
+5. **Names differ from mainline.** The PCK-600 compatible is `allwinner,sun60i-a733-pck-600` upstream and `allwinner,sun60iw2-pck-600` in the Zero 3W tree. Firmware is named `rogue_<BVNC>_v1.fw` upstream and `rgx.fw.<BVNC>` in the vendor tree.
+
+Upstream does not run the Zero 3W. Its mainline gaps are the CCU, the device tree, the BVNC and the firmware. Those are the commits to watch, or to write, if we want a mainline path.
+
+### 16.6 GPU routes and test order
+
+Four ways to drive this GPU on our board, ordered by evidence and by how much each test tells us.
+
+| Route | Driver | Firmware | Userspace | Status |
+|---|---|---|---|---|
+| **L** Linux host | Orange Pi 6.6 BSP `bsp/drivers/gpu/imagination` (`CONFIG_AW_DRM_POWERVR=m`), binds `img,gpu` | `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (libgpu, v3, open-source) | Mesa with apercel's BVNC patch. Not libgpu's DDK libraries (section 16.7). | First test. Module builds (2026-10-28, `out/route-l/` on the build PC); not run. |
+| **A** redroid | kit's `pvrsrvkm-android.ko` (Android DDK 6643903) | `/lib/firmware/rgx.fw.36.56.104.183` (Android copy) | Android blobs in the container | Built, never run. Keeps the PPU, secure and bit-27 writes. |
+| apercel (fallback) | out-of-tree kbuild module `apercel` (`driver/`, upstream drm/imagination files kept) | `/lib/firmware/apercel/rogue_36.56.104.183_v1.fw` (the Allwinner file, copied by hand; apercel does not ship it) | Mesa with `mesa/apercel-mesa.patch` | Tested by its author on an Orange Pi 4 Pro only. Not proven on the Zero 3W. Use it if Route L fails at the driver level. |
+| Radxa DKMS (reference) | DDK 6603887, Rogue style, for 5.15 | Radxa `rgx.fw` (v2, not open-source) | Radxa libraries | Not for our 6.6 kernel. |
+
+**Route L, step by step.** Step 1 runs on the build PC.
+1. Build PC, done 2026-10-28 in a copy of the kit tree (`/mnt/project/route-l-build/linux-orangepi-6.6`; the kit tree itself was not changed). `CONFIG_AW_DRM_POWERVR=m` and `make olddefconfig` add three helper modules that the kit's `.config` did not have: `CONFIG_DRM_EXEC=m`, `CONFIG_DRM_GEM_SHMEM_HELPER=m` and `CONFIG_DRM_SCHED=m`. Five config lines change in all (`out/route-l/config-delta.txt`). Then `make modules_prepare`, `make modules` and `make M=bsp/drivers/gpu/imagination modules` all exit 0. The one warning is an unused variable in the BSP's `drm_gpuvm.c`. `powervr.ko` has vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`, needs `gpu-sched`, `drm_shmem_helper` and `drm_exec`, and matches `img,gpu` (`of:N*T*Cimg,gpuC*`). MODVERSIONS is off in the kit config, so a load checks vermagic only. The four modules and their hashes are in `out/route-l/` on the build PC (`SHA256SUMS`). Not run on hardware yet.
+2. Board: install the modules and the firmware. Copy the four modules from `out/route-l/` (`powervr.ko`, `gpu-sched.ko`, `drm_shmem_helper.ko`, `drm_exec.ko`) to `/lib/modules/6.6.98-sun60iw2-redroid/extra/`, then run `sudo depmod -a`. The kit's kernel package does not carry them, and the running kernel needs no rebuild. Then install the firmware with `sudo install -D -m 0644 rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`).
+3. Board: unload `pvrsrvkm` if it is loaded, then `sudo modprobe powervr`. `modprobe` loads `gpu-sched`, `drm_shmem_helper` and `drm_exec` first, from the `depmod` index.
+4. Check `dmesg` for `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`. Then `ls /dev/dri` (card0 and renderD128) and `cat /sys/kernel/debug/dri/*/name` (expect `powervr`).
+5. Userspace comes after the module works, and it is not libgpu's. libgpu's libraries are DDK 24.2 builds, and `libsrv_um` calls `DRM_IOCTL_PVR_SRVKM_INIT`, which the upstream UAPI (`pvr_drm.h`) does not define. Use Mesa built with `mesa/apercel-mesa.patch`, then check with `vulkaninfo --summary`. Not tried.
+6. PD readbacks before and after step 3: `devmem 0x07065008` and `devmem 0x07066008`. `0x8` means on.
+
+Firmware errors look different from hardware errors. `firmware not available yet, deferring` means the file is missing or in the wrong path. `Unsupported fw info version 2` means the older info format; the Radxa and Android `rgx.fw` copies are info v2. `FW info format mismatch` means a header layout the driver does not parse. `Unsupported FW version` means the file lacks the open-source flag or has a major version the driver does not know. `FW built for incorrect GPU ID` means another BVNC.
+
+Order: Route L first. It uses the vendor's own minimal sequence, so a Route L failure at power, clock or probe points at the board, the DT or the firmware, not at the Android port. If Route L boots and Route A doesn't, the difference is in the Android-only writes.
+
+### 16.7 Vendor evidence (checked 2026-10-28)
+
+| What | Where | Key facts |
+|---|---|---|
+| Orange Pi 6.6 PowerVR driver | `orangepi-xunlong/linux-orangepi` @ `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f` (2026-09-17), `bsp/drivers/gpu/imagination/` | `CONFIG_AW_DRM_POWERVR` (`bsp/drivers/gpu/Kconfig:35`; tristate; selects DRM_EXEC, DRM_GEM_SHMEM_HELPER, DRM_SCHED, DRM_GPUVM, FW_LOADER; GPUVM is built from the driver's own `drm_gpuvm.c`). `dt_match` (`pvr_drv.c:1495`, match table after it): `img,gpu` gets the manual power ops, `thead,th1520-gpu` gets the pwrseq ops. IRQs `IRQGPU` and `IRQGPUDVFS`. Clocks `clk_parent`, `clk`, `clk_bus`, `clk_200` to `clk_800`. Firmware `powervr/rogue_<BVNC>_v1.fw`, v3 header with the open-source flag. No `sunxi_secure_config`, and no write to `0x0a0000b0` or `0x01880014`. DRM name `powervr` (`bsp/drivers/gpu/imagination/pvr_drv.h:10`). |
+| Orange Pi 6.6 power domains | same tree: `bsp/drivers/pm_domain/pck600_domains.c`, `bsp/include/dt-bindings/power/sun60iw2-power.h`, `arch/arm64/boot/dts/allwinner/sun60iw2p1.dtsi` | Register block at `id << 12` (`0x1000` per domain). Power control at +0x0, status at +0x8 (`sun60iw2_pck600_pmu`; `STATUS_ON` = `0x8`). GPU_TOP = 5, GPU_CORE = 6. SoC GPU node: `power-domains = <&pd SUN60IW2_PCK_GPU_TOP>` only. The `pd_gpu_core` node is commented out (lines 769–773). |
+| Orange Pi 6.6 board DT | `arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts` | `&gpu { gpu-supply = <&reg_dcdc4>; }` (line 3421). `reg_dcdc4` is 0.5–1.54 V, always-on and boot-on (line 2141). PMIC `x-powers,axp8191` (line 2099), which the vendor AXP2101 driver accepts (`bsp/drivers/power/mfd/axp2101-i2c.c:91`, `AXP8191_ID`). |
+| Orange Pi kernel configs | `orangepi-xunlong/orangepi-build` @ `a95129bf30ea11886cc35f08ebb3e69695a26656`, `external/config/kernel/` | `linux-sun60iw2-current-a733.config` (6.6.98) and `linux-sun60iw2-legacy-a733.config` (5.15.147) both have `# CONFIG_AW_DRM_POWERVR is not set`. The kit's kernel config matches the stock Debian config line for line. |
+| Allwinner GPU firmware and userspace | `gitlab.com/tina5.0_aiot/product/linux/external/libgpu` @ `144487e873671ba9817005f08c2abd4756dd4241`: `gpu-firmware/powervr/`, `img-bxm/.../wayland/` | `rogue_36.56.104.183_v1.fw` (126,976 B; sha256 `3974e79f…`; info v3; BVNC 36.56.104.183; open-source flag; fw 1.0 build 6852738). `rgx.fw.36.56.104.183` (sha256 `43eb5d05…`, same as Radxa's; info v2, which the upstream-style driver rejects; not for Route L). `rgx.sh.36.56.104.183` (`71e1b1da…`, same as Radxa's and the kit's). DDK 24.2.6603887 userspace: `libVK_IMG`, `libGLESv2_PVR_MESA`, `libPVROCL`, `libsrv_um`, `libpvr_dri_support`. `libsrv_um` calls `DRM_IOCTL_PVR_SRVKM_INIT`, which the upstream UAPI (`bsp/drivers/gpu/imagination/include/pvr_drm.h`) does not define. `powervr_icd.json` points to `/usr/lib/libVK_IMG.so`. |
+| AIoT rogue_km | `gitlab.com/tina5.0_aiot/lichee/bsp` @ `a5fe197076f2fed46223ac911588b4e6e6bffd3c`, `modules/gpu/img-bxm/linux/rogue_km/` | `sunxi_secure_config` in `services/system/rogue/rgx_sunxi/sunxi_platform.c:964`, which writes `0x2` to `0x0a0000b0` and `0x0` to `0x01880014`. `pfnTDSystemSecureConfig` is set in `services/system/rogue/rgx_sunxi/sysconfig.c:371` and called from `services/server/devices/rgxpower.c:886`. `RGX_BVNC := 36.56.104.183` (`build/linux/sunxi_linux/Makefile:69`), and `hwdefs/rogue/km/cores/rgxcore_km_36.56.104.183.h`. |
+| Vendor CCU | same Orange Pi tree: `bsp/drivers/clk/sunxi-ng/ccu-sun60iw2.c` | `gpu0_clk` at `0x0B20`: gate bit 31, mux bits 24–26, divider bits 0–3. `gpu0_bus_clk` gate at `0x0B24` bit 0. Reset `RST_BUS_GPU0` = 32 (`bsp/include/dt-bindings/reset/sun60iw2-ccu.h:42`), at `0x0B24` bit 16, which matches our DT. Bit 27 of `0x0B20` is not in the vendor field list. |
+| Mainline | `torvalds/linux` master, `drivers/gpu/drm/imagination/pvr_device.c` | `pvr_gpu_support_level`: supported are 33.15.11.3, 36.52.104.182 and 36.53.104.796. Unknown BVNCs are refused unless `exp_hw_support` is set. |
+| Mesa (upstream) | `gitlab.freedesktop.org/mesa/mesa` main, `src/imagination/vulkan/pvr_physical_device.c` | The BVNC switch lists 36.52.104.182 and 36.53.104.796 only. |
+| apercel | `TumRedSun/apercel`, `mesa/apercel-mesa.patch` | Adds `case PVR_BVNC_PACK(36, 56, 104, 183): return true;` to the device check in `src/imagination/vulkan/pvr_physical_device.c`. |
+
+**Potential upstream commits, from this evidence**
+- Kernel: one line in `pvr_gpu_support_level()` for 36.56.104.183, as SUPPORTED or EXPERIMENTAL. The firmware carries the device info, so the driver should need no feature table for it. Validate on hardware first.
+- Mesa: `PVR_BVNC_PACK(36, 56, 104, 183)` in `src/imagination/vulkan/pvr_physical_device.c`. apercel adds it along with limit changes.
+- Device tree: an Allwinner SoC compatible, then `img,img-bxm-4-64` and `img,img-rogue`, as the TH1520 entry does in the binding (section 16.3). Upstream has neither an Allwinner GPU compatible nor an A733 SoC DTS.
+- Clocks: the A733 CCU series in review (section 16.3).
+- Firmware: the libgpu file is marked open-source. Check its licence before any redistribution.
+
