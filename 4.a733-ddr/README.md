@@ -132,6 +132,13 @@ Checks so far:
 4. Suspend/resume: confirm "the first time ddr standby" on the first suspend only, and no retraining after.
 5. Raise `HdtCtrl` and map streaming IDs against what you decoded on the i.MX95: same PHY generation, possibly the same firmware branch `[?]`.
 
+**Upstream angle.** No open A733 DRAM init exists anywhere. Yixun Lan's U-Boot "initial A733 support" (v3, January 2026) stops before DRAM, which blocks a mainline boot (main README 3.11). The material here makes a U-Boot SPL driver realistic:
+- the PHY map, mailbox and message block;
+- the training flow;
+- the `dram_para` decode for the Zero 3W.
+
+Model it on U-Boot's `drivers/ddr/imx/phy` (same Synopsys PHY family), with the PMU firmware as an external binman blob.
+
 ## 5. Files
 
 ```

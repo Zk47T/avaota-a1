@@ -2,6 +2,8 @@
 
 Goal: run 2 Android instances on each Allwinner A733 board (Orange Pi Zero 3W / Zero 4). Each instance is a redroid container, and the PowerVR BXM-4-64 GPU does the rendering.
 
+Pilot board: **Orange Pi Zero 3W, 6 GB**, with a USB-C GbE dongle (section 8). The scripts work unchanged on the Zero 4.
+
 Status on 2026-10-28. Everything that can be built or checked without an A733 board has been done.
 
 - **On this PC:** the kernel and GPU driver were built, and the checks were static: reading binaries and image files.
@@ -283,7 +285,12 @@ Why route B is worth it:
 - **Zero 4:** RJ45 GbE onboard, so one power cable + one Ethernet cable and no dongle or hub. Add a heatsink and a 30 mm fan on its fan header.
 - **Zero 3W:** active cooler in the kit, but it needs a USB-C GbE dongle.
 - Same SoC, same images, same kernel, about the same total cost.
-- For a farm the **Zero 4** is simpler to cable and has fewer USB failure points. Keep the Zero 3W for RAM/eMMC/UFS rework.
+- On paper the **Zero 4** is simpler to cable and has fewer USB failure points.
+- **Decision (2026-10-28): pilot on a Zero 3W 6 GB** + USB-C GbE dongle (RTL8153), because the local shop has no Zero 4 6 GB.
+  - Same SoC, kernel, images and scripts.
+  - Run `45-usb-net.sh dongle` and keep the kit's active cooler fitted.
+  - Revisit the Zero 4 6 GB for boards 2 and 3 if it becomes available.
+  - The same Zero 3W is also the DDR-study and upstream board (main README 3.11).
 
 ## 9. On the A733 board
 
