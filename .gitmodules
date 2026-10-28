@@ -1,0 +1,9 @@
+[submodule "1.hardware/Avaota-A1"]
+	path = 1.hardware/Avaota-A1
+	url = https://github.com/AvaotaSBC/Avaota-A1.git
+[submodule "2.docs/docs"]
+	path = 2.docs/docs
+	url = https://gitlab.com/tina5.0_aiot/product/docs.git
+[submodule "2.docs/frdm-imx95-pro-jtag"]
+	path = 2.docs/frdm-imx95-pro-jtag
+	url = https://github.com/Zk47T/frdm-imx95-pro-jtag.git

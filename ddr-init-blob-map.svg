@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1410 1552" width="1410" height="1552" role="img" aria-labelledby="t d">
+<title id="t">DDR init and training: what is open, what is a blob</title>
+<desc id="d">Step-by-step DDR initialisation and training on the Avaota-A1 (Allwinner T527, vendor libdram path and mainline U-Boot path) and on the FRDM-IMX93 (NXP i.MX93 with a Synopsys PHY), colour-coded by open source, closed blob on the CPU, closed blob in the PHY microcontroller, PHY hardware engine, ROM, and tool-generated data.</desc>
+<style>.hl{fill:#fde047;opacity:0;animation:hl 18s infinite}@keyframes hl{0%{opacity:0}2%{opacity:.45}10%{opacity:.45}12.5%{opacity:0}100%{opacity:0}}@media (prefers-reduced-motion: reduce){.hl{animation:none}}</style>
+<rect x="0" y="0" width="1410" height="1552" fill="#ffffff"/>
+<text x="16" y="40" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" font-weight="800" fill="#111827">DDR init and training: what is open, what is a blob</text>
+<text x="16" y="66" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13.5" fill="#4b5563">Avaota-A1 (Allwinner T527) vs FRDM-IMX93 (NXP i.MX93) · from libdram.a symbols (SyterKit), U-Boot dram_sun55i_a523.c, U-Boot drivers/ddr/imx and the FRDM-IMX93 timing file · 2026-10-28</text>
+<rect class="hl" x="8" y="174" width="1394" height="84" rx="10" style="animation-delay:0.00s"/>
+<rect class="hl" x="8" y="260" width="1394" height="101" rx="10" style="animation-delay:2.25s"/>
+<rect class="hl" x="8" y="363" width="1394" height="145" rx="10" style="animation-delay:4.50s"/>
+<rect class="hl" x="8" y="510" width="1394" height="145" rx="10" style="animation-delay:6.75s"/>
+<rect class="hl" x="8" y="657" width="1394" height="162" rx="10" style="animation-delay:9.00s"/>
+<rect class="hl" x="8" y="821" width="1394" height="213" rx="10" style="animation-delay:11.25s"/>
+<rect class="hl" x="8" y="1036" width="1394" height="152" rx="10" style="animation-delay:13.50s"/>
+<rect class="hl" x="8" y="1190" width="1394" height="101" rx="10" style="animation-delay:15.75s"/>
+<rect x="216" y="96" width="380" height="66" rx="10" fill="#111827"/>
+<text x="230" y="120" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="800" fill="#ffffff">Avaota-A1 · vendor path</text>
+<text x="230" y="139" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#d1d5db">boot0 or SyterKit + libdram.a</text>
+<text x="230" y="155" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#9ca3af">everything runs on the A55</text>
+<rect x="612" y="96" width="380" height="66" rx="10" fill="#111827"/>
+<text x="626" y="120" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="800" fill="#ffffff">Avaota-A1 · mainline U-Boot SPL</text>
+<text x="626" y="139" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#d1d5db">dram_sun55i_a523.c (GPL)</text>
+<text x="626" y="155" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#9ca3af">runs on the A55</text>
+<rect x="1008" y="96" width="380" height="66" rx="10" fill="#111827"/>
+<text x="1022" y="120" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="800" fill="#ffffff">FRDM-IMX93 · U-Boot SPL + Synopsys PHY</text>
+<text x="1022" y="139" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#d1d5db">drivers/ddr/imx + PMU training firmware</text>
+<text x="1022" y="155" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#9ca3af">A55 + a microcontroller inside the PHY</text>
+<text x="16" y="120" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#6b7280">STEP</text>
+<line x1="16" y1="170" x2="1394" y2="170" stroke="#e5e7eb" stroke-width="1"/>
+<circle cx="30" cy="196" r="13" fill="#111827"/>
+<text x="30" y="200.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">1</text>
+<text x="50" y="201" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Load the DRAM-init code</text>
+<text x="50" y="218" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">into SRAM</text>
+<rect x="216" y="180" width="380" height="72" rx="8" fill="#eef0f3" stroke="#6b7280" stroke-width="1.6"/>
+<rect x="226" y="190" width="165" height="18" rx="9" fill="#6b7280"/>
+<text x="234" y="202.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">ROM / SECURE FIRMWARE</text>
+<text x="226" y="225" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Boot ROM loads boot0 / SyterKit into SRAM</text>
+<text x="226" y="242" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">or FEL over USB (xfel), always available</text>
+<rect x="612" y="180" width="380" height="72" rx="8" fill="#eef0f3" stroke="#6b7280" stroke-width="1.6"/>
+<rect x="622" y="190" width="165" height="18" rx="9" fill="#6b7280"/>
+<text x="630" y="202.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">ROM / SECURE FIRMWARE</text>
+<text x="622" y="225" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Boot ROM loads U-Boot SPL into SRAM</text>
+<text x="622" y="242" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">or FEL over USB (xfel), always available</text>
+<rect x="1008" y="180" width="380" height="72" rx="8" fill="#eef0f3" stroke="#6b7280" stroke-width="1.6"/>
+<rect x="1018" y="190" width="165" height="18" rx="9" fill="#6b7280"/>
+<text x="1026" y="202.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">ROM / SECURE FIRMWARE</text>
+<text x="1018" y="225" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Boot ROM + ELE firmware load SPL into OCRAM</text>
+<text x="1018" y="242" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">signed ELE container · or SDP over USB (uuu)</text>
+<line x1="16" y1="259.0" x2="1394" y2="259.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="282" r="13" fill="#111827"/>
+<text x="30" y="286.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">2</text>
+<text x="50" y="287" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Clocks, PLL, DRAM</text>
+<text x="50" y="304" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">voltage</text>
+<rect x="216" y="266" width="380" height="89" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="276" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="288.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="311" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_sys_init, ccm_set_pll_ddr0_sscg</text>
+<text x="226" y="328" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">dram_vol_set</text>
+<text x="226" y="345" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">DRAM PLL, VCC-DRAM (AXP717 DCDC3)</text>
+<rect x="612" y="266" width="380" height="72" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="276" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="288.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="311" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_sys_init</text>
+<text x="622" y="328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">PLL5 = 2 × DRAM clock; DCDC3 = 1160 mV</text>
+<rect x="1008" y="266" width="380" height="72" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="1018" y="276" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="1026" y="288.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="1018" y="311" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddrphy_coldreset, DRAM PLL setup</text>
+<text x="1018" y="328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">PMIC rails and clocks set by SPL</text>
+<line x1="16" y1="362.0" x2="1394" y2="362.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="385" r="13" fill="#111827"/>
+<text x="30" y="389.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">3</text>
+<text x="50" y="390" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Controller setup:</text>
+<text x="50" y="407" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">timings, address map</text>
+<rect x="216" y="369" width="380" height="89" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="379" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="391.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="414" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_com_set_channel_timing</text>
+<text x="226" y="431" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_com_set_controller_address_map</text>
+<text x="226" y="448" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">uMCTL2-style controller</text>
+<rect x="612" y="369" width="380" height="89" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="379" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="391.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="414" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_ctrl_init</text>
+<text x="622" y="431" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">dram_timings/a523_lpddr4.c</text>
+<text x="622" y="448" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">uMCTL2 register names, as on the H6</text>
+<rect x="1008" y="369" width="380" height="55" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="1018" y="379" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="1026" y="391.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="1018" y="414" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddrc_config()</text>
+<rect x="1008" y="430" width="380" height="72" rx="8" fill="#e5efff" stroke="#1d4ed8" stroke-width="1.6"/>
+<rect x="1018" y="440" width="165" height="18" rx="9" fill="#1d4ed8"/>
+<text x="1026" y="452.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">DATA · MADE BY A TOOL</text>
+<text x="1018" y="475" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">values from lpddr4x_timing.c,</text>
+<text x="1018" y="492" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">generated by the NXP DDR tool</text>
+<line x1="16" y1="509.0" x2="1394" y2="509.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="532" r="13" fill="#111827"/>
+<text x="30" y="536.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">4</text>
+<text x="50" y="537" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">PHY setup, ZQ</text>
+<text x="50" y="554" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">calibration</text>
+<rect x="216" y="516" width="380" height="89" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="526" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="538.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="561" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddrphy_phyinit_C_initPhyConfig</text>
+<text x="226" y="578" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">phy_para_config, phy_zq_calibration</text>
+<text x="226" y="595" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_vref_config</text>
+<rect x="612" y="516" width="380" height="72" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="526" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="538.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="561" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_init, mctl_phy_configure_odt</text>
+<text x="622" y="578" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">209 PHY offsets, meanings reverse-engineered</text>
+<rect x="1008" y="516" width="380" height="55" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="1018" y="526" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="1026" y="538.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="1018" y="561" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddr_cfg_phy(): writes ddrphy_cfg[]</text>
+<rect x="1008" y="577" width="380" height="72" rx="8" fill="#e5efff" stroke="#1d4ed8" stroke-width="1.6"/>
+<rect x="1018" y="587" width="165" height="18" rx="9" fill="#1d4ed8"/>
+<text x="1026" y="599.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">DATA · MADE BY A TOOL</text>
+<text x="1018" y="622" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">CSR values from lpddr4x_timing.c;</text>
+<text x="1018" y="639" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">names public in ST's PhyInit (TF-A)</text>
+<line x1="16" y1="656.0" x2="1394" y2="656.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="679" r="13" fill="#111827"/>
+<text x="30" y="683.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">5</text>
+<text x="50" y="684" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Load training firmware</text>
+<rect x="216" y="663" width="380" height="33" rx="8" fill="#ffffff" stroke="#9ca3af" stroke-width="1.6" stroke-dasharray="5 4"/>
+<text x="226" y="686" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">nothing to load: no PHY microcontroller</text>
+<rect x="612" y="663" width="380" height="33" rx="8" fill="#ffffff" stroke="#9ca3af" stroke-width="1.6" stroke-dasharray="5 4"/>
+<text x="622" y="686" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">nothing to load: no PHY microcontroller</text>
+<rect x="1008" y="663" width="380" height="72" rx="8" fill="#fde8e8" stroke="#b91c1c" stroke-width="1.6"/>
+<rect x="1018" y="673" width="200" height="18" rx="9" fill="#b91c1c"/>
+<text x="1026" y="685.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS IN THE PHY MCU</text>
+<text x="1018" y="708" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Synopsys training firmware → PHY</text>
+<text x="1018" y="725" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">IMEM 0x50000 · DMEM 0x54000</text>
+<rect x="1008" y="741" width="380" height="72" rx="8" fill="#e5efff" stroke="#1d4ed8" stroke-width="1.6"/>
+<rect x="1018" y="751" width="165" height="18" rx="9" fill="#1d4ed8"/>
+<text x="1026" y="763.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">DATA · MADE BY A TOOL</text>
+<text x="1018" y="786" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">message block: SequenceCtrl 0x131f,</text>
+<text x="1018" y="803" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">HdtCtrl 0xC8, MRs, Vref (from timing.c)</text>
+<line x1="16" y1="820.0" x2="1394" y2="820.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="843" r="13" fill="#111827"/>
+<text x="30" y="847.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">6</text>
+<text x="50" y="848" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Training: write</text>
+<text x="50" y="865" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">leveling, gate,</text>
+<text x="50" y="882" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">read/write</text>
+<rect x="216" y="827" width="380" height="89" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="837" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="849.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="872" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">phy_write_leveling, phy_read_calibration</text>
+<text x="226" y="889" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">phy_read_training, phy_write_training</text>
+<text x="226" y="906" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">set the trigger bits, poll for done</text>
+<rect x="216" y="922" width="380" height="72" rx="8" fill="#f1ebff" stroke="#6d28d9" stroke-width="1.6" stroke-dasharray="5 4"/>
+<rect x="226" y="932" width="151" height="18" rx="9" fill="#6d28d9"/>
+<text x="234" y="944.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">PHY HARDWARE ENGINE</text>
+<text x="226" y="967" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">the PHY's hardware engines do the training</text>
+<text x="226" y="984" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">(fixed state machines, undocumented)</text>
+<rect x="612" y="827" width="380" height="106" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="837" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="849.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="872" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_write_leveling / _read_calibration</text>
+<text x="622" y="889" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_read_training / _write_training</text>
+<text x="622" y="906" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">gated by TPR10 bits 20–23</text>
+<text x="622" y="923" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">(Avaota default: read calibration only)</text>
+<rect x="612" y="939" width="380" height="55" rx="8" fill="#f1ebff" stroke="#6d28d9" stroke-width="1.6" stroke-dasharray="5 4"/>
+<rect x="622" y="949" width="151" height="18" rx="9" fill="#6d28d9"/>
+<text x="630" y="961.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">PHY HARDWARE ENGINE</text>
+<text x="622" y="984" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">the same PHY hardware engines</text>
+<rect x="1008" y="827" width="380" height="123" rx="8" fill="#fde8e8" stroke="#b91c1c" stroke-width="1.6"/>
+<rect x="1018" y="837" width="200" height="18" rx="9" fill="#b91c1c"/>
+<text x="1026" y="849.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS IN THE PHY MCU</text>
+<text x="1018" y="872" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">The PHY's microcontroller (PMU) trains:</text>
+<text x="1018" y="889" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">3733 / 1866 / 625 MT/s 1D, then 3733 2D</text>
+<text x="1018" y="906" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">DevInit WrLvl RxEn RdDQS1D WrDQ1D</text>
+<text x="1018" y="923" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">RdDeskew MxRdLat LPCA · 2D eye centering</text>
+<text x="1018" y="940" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">JTAG cannot step this code</text>
+<rect x="1008" y="956" width="380" height="72" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="1018" y="966" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="1026" y="978.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="1018" y="1001" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">wait_ddrphy_training_complete()</text>
+<text x="1018" y="1018" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">SPL polls the mailbox, reads the CDD results</text>
+<line x1="16" y1="1035.0" x2="1394" y2="1035.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="1058" r="13" fill="#111827"/>
+<text x="30" y="1062.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">7</text>
+<text x="50" y="1063" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Per-bit delays, eye scan</text>
+<rect x="216" y="1042" width="380" height="140" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="1052" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="1064.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="1087" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_dx_bit_delay_compensation</text>
+<text x="226" y="1104" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">per-bit delays from tpr11 / tpr12</text>
+<text x="226" y="1121" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">dx_training → dst_dq_eye_scan</text>
+<text x="226" y="1138" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">Get_rx_vref_value, NEON memtests</text>
+<text x="226" y="1155" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#9a3412">★ software eye scan on the CPU:</text>
+<text x="226" y="1172" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#9a3412">   step it with JTAG, reverse it in Ghidra</text>
+<rect x="612" y="1042" width="380" height="89" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="1052" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="1064.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="1087" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_phy_bit_delay_compensation</text>
+<text x="622" y="1104" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">fixed tpr11 / tpr12 delays</text>
+<text x="622" y="1121" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">no software eye scan</text>
+<rect x="1008" y="1042" width="380" height="72" rx="8" fill="#e5efff" stroke="#1d4ed8" stroke-width="1.6"/>
+<rect x="1018" y="1052" width="165" height="18" rx="9" fill="#1d4ed8"/>
+<text x="1026" y="1064.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">DATA · MADE BY A TOOL</text>
+<text x="1018" y="1087" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddrphy_pie[] → PHY Init Engine</text>
+<text x="1018" y="1104" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">opaque sequencer program from timing.c</text>
+<rect x="1008" y="1120" width="380" height="50" rx="8" fill="#ffffff" stroke="#9ca3af" stroke-width="1.6" stroke-dasharray="5 4"/>
+<text x="1018" y="1143" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">eye centering already ran in the PMU (2D);</text>
+<text x="1018" y="1160" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-style="italic" fill="#4b5563">HdtCtrl 0x04 / 0x05 streams eye data out</text>
+<line x1="16" y1="1189.0" x2="1394" y2="1189.0" stroke="#f3f4f6" stroke-width="1"/>
+<circle cx="30" cy="1212" r="13" fill="#111827"/>
+<text x="30" y="1216.5" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="800" fill="#ffffff">8</text>
+<text x="50" y="1217" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Detect size, hand off</text>
+<rect x="216" y="1196" width="380" height="72" rx="8" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<rect x="226" y="1206" width="172" height="18" rx="9" fill="#c2410c"/>
+<text x="234" y="1218.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">BLOB · RUNS ON THE A55</text>
+<text x="226" y="1241" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">auto_scan_dram_config / _size / _rank_width</text>
+<text x="226" y="1258" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">boot0 writes trained params back to flash</text>
+<rect x="612" y="1196" width="380" height="72" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="622" y="1206" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="630" y="1218.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="622" y="1241" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">mctl_auto_detect_rank_width / _size</text>
+<text x="622" y="1258" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">probe at 360 MHz, then re-init at 1200 MHz</text>
+<rect x="1008" y="1196" width="380" height="89" rx="8" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<rect x="1018" y="1206" width="95" height="18" rx="9" fill="#15803d"/>
+<text x="1026" y="1218.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="0.4" fill="#ffffff">OPEN SOURCE</text>
+<text x="1018" y="1241" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">spl_dram_init(): 1 GB / 2 GB table</text>
+<text x="1018" y="1258" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11.5" fill="#111827">ddrphy_trained_csr_save()</text>
+<text x="1018" y="1275" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">trained CSRs kept for low-power retention</text>
+<line x1="208" y1="184" x2="208" y2="1281" stroke="#d1d5db" stroke-width="2"/>
+<path d="M 203 1273 L 208 1281 L 213 1273" fill="none" stroke="#d1d5db" stroke-width="2"/>
+<line x1="604" y1="184" x2="604" y2="1281" stroke="#d1d5db" stroke-width="2"/>
+<path d="M 599 1273 L 604 1281 L 609 1273" fill="none" stroke="#d1d5db" stroke-width="2"/>
+<line x1="1000" y1="184" x2="1000" y2="1281" stroke="#d1d5db" stroke-width="2"/>
+<path d="M 995 1273 L 1000 1281 L 1005 1273" fill="none" stroke="#d1d5db" stroke-width="2"/>
+<line x1="16" y1="1293" x2="1394" y2="1293" stroke="#111827" stroke-width="1.5"/>
+<text x="16" y="1325" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#111827">What you can see</text>
+<rect x="216" y="1305" width="380" height="67" rx="8" fill="#ffffff" stroke="#111827" stroke-width="1.2"/>
+<text x="226" y="1328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">All of it is CPU code.</text>
+<text x="226" y="1345" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">JTAG + Ghidra can follow every step;</text>
+<text x="226" y="1362" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">only the PHY engines are black boxes.</text>
+<rect x="612" y="1305" width="380" height="50" rx="8" fill="#ffffff" stroke="#111827" stroke-width="1.2"/>
+<text x="622" y="1328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">All of it is open C.</text>
+<text x="622" y="1345" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">The gap: what the PHY registers mean.</text>
+<rect x="1008" y="1305" width="380" height="67" rx="8" fill="#ffffff" stroke="#111827" stroke-width="1.2"/>
+<text x="1018" y="1328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Everything around training is open.</text>
+<text x="1018" y="1345" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Training itself is a black box in the PHY:</text>
+<text x="1018" y="1362" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">you set its inputs and read its outputs.</text>
+<text x="16" y="1402" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="800" fill="#111827">Legend</text>
+<rect x="16" y="1418" width="26" height="18" rx="4" fill="#e3f7e8" stroke="#15803d" stroke-width="1.6"/>
+<text x="50" y="1431.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Open source code: read it, change it</text>
+<rect x="478" y="1418" width="26" height="18" rx="4" fill="#fff1e0" stroke="#c2410c" stroke-width="1.6"/>
+<text x="512" y="1431.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Closed blob on the main CPU: step it, reverse it</text>
+<rect x="940" y="1418" width="26" height="18" rx="4" fill="#fde8e8" stroke="#b91c1c" stroke-width="1.6"/>
+<text x="974" y="1431.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Closed blob inside the PHY's microcontroller: no stepping</text>
+<rect x="16" y="1448" width="26" height="18" rx="4" fill="#f1ebff" stroke="#6d28d9" stroke-width="1.6" stroke-dasharray="5 4"/>
+<text x="50" y="1461.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">PHY hardware engine: undocumented state machine</text>
+<rect x="478" y="1448" width="26" height="18" rx="4" fill="#e5efff" stroke="#1d4ed8" stroke-width="1.6"/>
+<text x="512" y="1461.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Data made by a vendor tool: open file, opaque values</text>
+<rect x="940" y="1448" width="26" height="18" rx="4" fill="#eef0f3" stroke="#6b7280" stroke-width="1.6"/>
+<text x="974" y="1461.5" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#374151">Boot ROM / secure firmware</text>
+<text x="16" y="1500" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#4b5563">FRDM-IMX95 Pro: same model as the i.MX93, but DDR init runs in the OEI on the Cortex-M33 (imx-oei, BSD-3) and loads Synopsys LPDDR5 training firmware (blob).</text>
+<text x="16" y="1520" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" fill="#4b5563">The yellow band steps through the rows in order (browsers only). Function names are real symbols; T527 PHY register meanings come from reverse engineering.</text>
+</svg>

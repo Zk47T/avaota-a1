@@ -1,0 +1,746 @@
+# Avaota-A1 (Allwinner T527 / A527): JTAG and DRAM-training notes
+
+Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer three questions:
+
+1. How do I enable JTAG on this chip? (Section 1)
+2. Can I use this cheap board to learn DRAM (LPDDR4) training? (Section 2)
+3. Would an NXP i.MX board be a better buy, and is DDR training in demand? (Sections 2.6 and 2.7)
+
+Everything here was checked on 2026-10-22 against the files in this repo (schematic v1.7, BOM v1.7, the Allwinner manuals) and against upstream source code (xfel, SyterKit, U-Boot and OpenOCD). Nothing has been tried on a real board yet. Steps that depend on hardware behaviour are marked **(untested)**.
+
+---
+
+## 0. Board at a glance
+
+| Item | Value | Where it comes from |
+|---|---|---|
+| SoC | **T527** on the BOM (part `U14`). Pine64 sells the board as "A527". Both chips are the sun55iw3 family, and the JTAG pin mux and GPIO registers are the same in the A527 and T527 manuals. | BOM v1.7, schematic sheet 4 |
+| DRAM | 1× LPDDR4 FBGA200 chip (`UD1`), 32-bit bus | BOM v1.7, SyterKit DT |
+| PMIC | AXP717 (`U4`) and AXP323 (`U5`) | BOM v1.7, schematic sheet 3 |
+| Storage | microSD (SDC0 on PF0–PF6), eMMC (SDC2), SPI NAND W25N01GV (`U18`) | BOM v1.7 |
+| Debug UART | UART0 on PB9/PB10, 40-pin header **pin 8 = TX, pin 10 = RX**, 3.3 V | schematic sheets 6 and 9 |
+| FEL (USB recovery) | `FEL1` push-button | schematic sheet 4 |
+| I/O voltage | VCC-IO and VCC-CARD both come from AXP717 CLDO3 at **3.3 V** | schematic sheet 3 |
+| Price | Pine64 store, 4 GB/32 GB: "community price" **$54.95** (2 GB/16 GB: $39.95), without shipping | [pine64.com](https://pine64.com/?p=358314) |
+
+Repo layout:
+
+- [1.hardware/Avaota-A1](1.hardware/Avaota-A1): YuzukiHD open hardware. Contains schematics v1.2–v1.7, BOM, Gerbers, Altium/EasyEDA projects, LPDDR4 layout templates (`resource/dram_4l`, `resource/dram_8l`) and IBIS models.
+- [2.docs/docs](2.docs/docs): Allwinner documentation: A523/A527/T527/A733/T736 manuals, hardware design guides and SDK guides.
+
+---
+
+## 1. JTAG
+
+### 1.1 Short answer
+
+The microSD sniffer + CH347F setup used on the **T113** should work here without changes. On T527 the main-CPU JTAG sits on the same SD pins, in the same register (`PF_CFG0 @ 0x020000F0`), with the same function number (3).
+
+There is one difference. **On Avaota-A1, nothing turns JTAG on by default.** You have to switch PF0/PF1/PF3/PF5 to function 3 yourself, and then stop anything else from switching them back to SD mode:
+
+```
+PF_CFG0 @ 0x020000F0  <=  0x0F3F3F33
+        PF0=3 JTAG-MS(TMS)  PF1=3 JTAG-DI(TDI)  PF3=3 JTAG-DO(TDO)  PF5=3 JTAG-CK(TCK)
+        PF2, PF4, PF6 = 0xF (I/O disabled)
+```
+
+`PF_CFG0` resets to `0x0FFF_FFFF` (all pins disabled). See A527 User Manual §8.6.6.45.
+
+### 1.2 JTAG ports on the chip, and which ones the board wires out
+
+| Port | Pins (mux function) | What it debugs | On Avaota-A1 |
+|---|---|---|---|
+| **CPUX JTAG** | PF0 TMS, PF1 TDI, PF3 TDO, PF5 TCK (func 3) | 8× Cortex-A55 | **microSD socket**: use this one |
+| CPUX JTAG, alternate | PB0 TMS, PB1 TCK, PB2 TDO, PB3 TDI (func 4) | 8× Cortex-A55 | Only on the 50-pin RGB-LCD FPC (`FPC1`), pins 7/8/15/16 (LCD0-D0/D1/D8/D9). Needs a 0.5 mm FPC breakout. |
+| S-RJTAG (T527 also has S-DJTAG) | PL8 TMS, PL9 TCK, PL10 TDO, PL11 TDI (RJTAG func 4; DJTAG func 3 on T527) | XuanTie E906 RISC-V (and the HiFi4 DSP on T527) | 40-pin header **pins 32, 31, 33, 36**. These pins are shared with the SPI-LCD nets (backlight enable, on-board SPI TFT). |
+| S-JTAG | PL4–PL7 (func 2) | CPUS | Not connected |
+| S-RJTAG, alternate | PM2–PM5 (func 3) | E906 | Only PM2/PM3 are wired (STWI1, header pins 28/29). PM4/PM5 are not connected, so this port is unusable. |
+
+**The JTAG-SEL ball (G16)** is left floating on this board, and the internal pull-up makes it read 1. The A527/T527 hardware design guides define it as:
+
+- `1` (default): software can route CPUX JTAG to **PF (default)** or PB.
+- `0`: JTAG is forced onto PB.
+
+The ball has no test pad, so leave it alone.
+
+### 1.3 Wiring: microSD sniffer → CH347F
+
+| microSD pin | SD signal | T527 pin | JTAG | CH347F |
+|---|---|---|---|---|
+| 1 | DAT2 | PF5 | **TCK** | TCK |
+| 2 | CD/DAT3 | PF4 | (UART0-RX) | leave open |
+| 3 | CMD | PF3 | **TDO** | TDO |
+| 4 | VDD | VCC-CARD, 3.3 V | — | Reference only. Do not power the board from it. |
+| 5 | CLK | PF2 | (UART0-TX) | leave open |
+| 6 | VSS | GND | **GND** | GND |
+| 7 | DAT0 | PF1 | **TDI** | TDI |
+| 8 | DAT1 | PF0 | **TMS** | TMS |
+
+- This is the same mapping as the linux-sunxi microSD breakout (DAT2→TCK, CMD→TDO, DAT0→TDI, DAT1→TMS). A sniffer wired for T113 fits as-is.
+- Set the CH347F I/O to **3.3 V**.
+- The SD slot carries no nTRST or nSRST. Leave CH347F **pin 8 (SRST)** unconnected, because the CH347F drives it low hard at power-up.
+- For the console, use UART0 on header pins 8/10 rather than PF2/PF4. Muxing UART0 onto both PB9/PB10 and PF2/PF4 at once would give two inputs on one RX.
+
+### 1.4 Why it "just works" on T113 but not here
+
+- **xfel**: `xfel jtag` on T113 (`chips/r528_t113.c`) runs a small payload that sets PF0/1/3/5 to function 3 in `0x020000F0`. On the A523/A527/T527 family (`chips/a523_a527_t527.c`, xfel master 2026-09-14), `chip_jtag()` is an **empty stub that returns 0**, so `xfel jtag` does nothing. Use `xfel write32` instead (method A below).
+- **Boot chain**: every boot-select option printed on schematic sheet 4 probes **SMHC0 (the SD slot) first**, so the BROM switches PF to SD mode while it probes. SyterKit (`mmc0_pins`: PF0–PF5, function 2), U-Boot and Linux also take PF0–PF5 for `mmc0`. On T113, your image or tooling had already put these pins in JTAG mode for you.
+
+### 1.5 Five ways to turn it on
+
+**A. FEL mode.** No software changes. This is the best method for bring-up, and for stepping through your own SPL or DRAM-init code. **(untested)**
+
+```sh
+# Hold FEL1 and power on (or press reset), with the USB OTG port connected to the PC
+xfel version                          # family ID is 0x00189000 (A523/A527/T527)
+xfel write32 0x020000f0 0x0f3f3f33
+xfel read32  0x020000f0               # expect 0x0f3f3f33
+openocd -f avaota-a1-ch347.cfg        # see 1.6
+```
+
+In FEL mode the A55 runs the BROM in AArch32 state. Code you later load with `xfel write` + `xfel exec` keeps JTAG only as long as it does not re-mux PF.
+
+**B. Vendor BSP boot0** (Tina / AIoT Linux SDK). Add this to `sys_config.fex`:
+
+```ini
+[jtag_para]
+jtag_enable = 1
+jtag_ms = port:PF00<3><default><default><default>
+jtag_ck = port:PF05<3><default><default><default>
+jtag_do = port:PF03<3><default><default><default>
+jtag_di = port:PF01<3><default><default><default>
+```
+
+`update_boot0` copies these values into the boot0 header. In the boot0 main flow, `enable_jtag → boot_set_gpio` runs **before `init_DRAM`** (Linux_SPL-PUB guide §5.1), so JTAG is already live while libdram trains the DRAM. The Tina config guide (§3.2.10) uses PB14–PB17 in its example. On T527, use the PF pins shown above.
+
+You must boot from eMMC with this method. U-Boot and Linux will still claim `mmc0` later, so either disable it or use method D.
+
+**C. SyterKit or mainline U-Boot SPL.** Add one read-modify-write early in board init:
+
+```c
+/* PF0/PF1/PF3/PF5 -> JTAG (function 3); leave PF2/PF4/PF6 untouched */
+u32 v = readl(0x020000f0);
+v &= ~0x00f0f0ff;
+v |=  0x00303033;
+writel(v, 0x020000f0);
+```
+
+Also disable `mmc0` in that build and boot from eMMC.
+
+**D. From a running Linux system.** Use this to attach to a live kernel. **(untested)**
+
+```sh
+# Release PF0-PF5 from the SD driver. The device name is 4020000.mmc (mainline)
+# or 4020000.sdmmc (BSP); check under /sys/bus/platform/drivers/sunxi-mmc/
+echo 4020000.mmc > /sys/bus/platform/drivers/sunxi-mmc/unbind
+devmem 0x020000f0 32 0x0f3f3f33
+```
+
+Boot the kernel with `cpuidle.off=1`. Otherwise idle A55 cores power down and drop the debug session.
+
+**E. The alternate PB route.** **(untested)** This is the **same CPUX debug port** (same DAP, same 8× A55, same OpenOCD config). Only the pins differ. Use it when you want to keep the SD slot free, for example to boot from SD while debugging.
+
+- **Pins:** PB0–PB3 with mux function **4** (not 3). They are only wired to the 50-pin RGB-LCD connector `FPC1` (0.5 mm pitch), so you need an FPC breakout board.
+
+  | FPC1 pin | Net | T527 pin | JTAG |
+  |---|---|---|---|
+  | 7 | LCD0-D0 | PB0 | TMS |
+  | 8 | LCD0-D1 | PB1 | TCK |
+  | 15 | LCD0-D8 | PB2 | TDO |
+  | 16 | LCD0-D9 | PB3 | TDI |
+  | 5, 6 (also 31, 39, 44, 50) | GND | — | GND |
+  | 3, 4 | VCC-3V3 | — | I/O reference |
+
+- **Enable it:** `PB_CFG0` is at `0x02000030` (reset value `0xFFFF_FFFF`). Set its low 16 bits to `0x4444`. From FEL: `xfel write32 0x02000030 0xffff4444`. In code: `v = readl(0x02000030); v = (v & ~0xffff) | 0x4444; writel(v, 0x02000030);`
+- **Use one route at a time.** Leave PF0–PF5 out of function 3 while you use PB. JTAG-SEL is high on this board, which the design guide describes as "software selects PF or PB". I found no register for this other than the pin mux, so treat it as untested.
+- **Costs:** the RGB LCD can't be used at the same time, and the FPC breakout is fiddlier to wire than an SD sniffer.
+
+### 1.6 OpenOCD
+
+- The **CH347 driver** has been in OpenOCD master since **2025-08-24**. It is not in any tagged release (the last tag is v0.12.0, January 2023), so **build OpenOCD from git**. The CH347F is auto-detected (VID `0x1a86`, PID `0x55de`).
+- There is **no upstream T527/A523 target config**. The closest templates are `tcl/target/allwinner_h618.cfg` (4× A53, `aarch64`) and `tcl/target/rk3588.cfg` (DynamIQ A55 + A76).
+- On T113 you used a Cortex-A7 (`cortex_a` target). This chip needs `aarch64` targets with per-core `-dbgbase` / `-cti` addresses, which you read from the ROM table.
+
+Starter config **(untested)**:
+
+```tcl
+# avaota-a1-ch347.cfg: starting point, not yet tested on hardware
+adapter driver ch347
+transport select jtag
+adapter speed 1000
+
+# The ARM JTAG-DP IR length is 4. Add -expected-id <idcode> once you have seen the IDCODE.
+jtag newtap t527 cpu -irlen 4
+dap create t527.dap -chain-position t527.cpu
+```
+
+Discovery run:
+
+```sh
+openocd -f avaota-a1-ch347.cfg -c init -c "dap init" -c "dap info 0" -c "dap info 1"
+```
+
+Take the per-core **Debug** and **CTI** base addresses from the ROM table output. Then add one block per core, modelled on `allwinner_h618.cfg`:
+
+```tcl
+cti create t527.cti0 -dap t527.dap -ap-num <AP> -baseaddr <CTI0_BASE>
+target create t527.cpu0 aarch64 -dap t527.dap -ap-num <AP> -dbgbase <DBG0_BASE> -cti t527.cti0
+```
+
+The A527 manual's CPUX block diagram labels the debug block "Coresight600". If `dap info` fails with ADIv5 errors, try `dap create ... -adiv6`.
+
+### 1.7 Gotchas
+
+- **The SD slot becomes the debug port**, so boot from eMMC (or SPI NAND). With the sniffer inserted, the BROM probes SD first, gets no reply, and falls back.
+- **Anything that touches `mmc0` re-muxes PF0–PF5 and JTAG drops.** That includes the BROM, the boot0 card probe, U-Boot `mmc rescan` and Linux card-detect.
+- **Idle A55 cores power down** and kill the session. Boot Linux with `cpuidle.off=1`.
+- **eFuse**: the Allwinner SDK has `sid_disable_jtag()` (permanent, secure-boot flow only) and secure-debug certificates (A527 UM §9.1.4). Setting `jtag_enable = 0` in `sys_config.fex` only stops boot0 from setting the pins. Retail Avaota boards boot unsigned SyterKit/U-Boot, so the secure-boot fuses (including JTAG-disable) are normally not burned. If `scan_chain` finds nothing after the mux write, check wiring and voltage levels first.
+- **Speed**: start at 1 MHz and raise it once the chain is stable. Sniffer flex cables are long.
+- The PB route conflicts with an RGB LCD. The PL route conflicts with the SPI-LCD / backlight nets.
+
+---
+
+## 2. Can I learn DRAM training on Avaota-A1?
+
+### 2.1 Verdict
+
+**Yes, for the firmware side of LPDDR4 bring-up and training. No, for PHY internals or signal integrity.**
+
+What makes it a good learning board:
+
+1. **Open-source DRAM init for this exact board.** Mainline U-Boot has `arch/arm/mach-sunxi/dram_sun55i_a523.c` (about 1,500 lines, LPDDR4 + DDR3, merged July 2025) and `configs/avaota-a1_defconfig`. The code is reverse-engineered, but it is readable C that you can modify and rebuild in minutes.
+2. **The vendor training is observable.** Allwinner's libdram "soft training" logs per-byte and per-bit eye scans (range / width / center). The guide is in this repo.
+3. **It cannot be bricked.** USB FEL lives in the BROM and the `FEL1` button is on the board. Bad DRAM parameters only make the boot fail, and you can recover with `xfel`.
+4. **JTAG works before DRAM is up.** The SPL runs from SRAM, so you can halt in the middle of training (Section 1).
+5. **The DRAM rail is adjustable.** VCC-DRAM comes from AXP717 DCDC3, which the schematic marks "软件调整" (software-adjusted); mainline sets it to 1160 mV. This allows voltage margining.
+6. **The hardware is open.** Schematic, PCB, LPDDR4 layout templates (4-layer and 8-layer) and T527 LPDDR4/4X IBIS models are all available, so you can relate layout to training results.
+
+What limits it:
+
+1. **There are no register docs.** The DRAMC chapter of the A527/T527 user manual (§3.2) is a one-page feature list. `MEMC_DDRC` (`0x0313_0000`) and `MEMC_PHY` (`0x0314_0000`) are undocumented, and the mainline code is full of magic offsets (`//TODO: ???`).
+2. **Most training runs in hardware engines inside the PHY.** Software sets bits and polls for write leveling, read-gate calibration and read/write training. You learn the sequence and the results, not the engine's algorithm.
+3. **Allwinner's software eye-scan training is a closed blob** (`libdram`): BSP boot0, SyterKit's `soc/sun55iw3/lib/libdram.a`, and xfel's `xfel ddr lpddr4` payload. It is **reversible**, though: see 2.9.
+4. **The mainline driver has no command-bus-training step.** CA timing comes from fixed per-bit delays.
+5. **One soldered x32 LPDDR4 chip, and no DQ/DQS test points.** You cannot scope eyes (and that would need a multi-GHz scope anyway).
+
+### 2.2 DRAM setup on this board
+
+| | |
+|---|---|
+| Memory | 1× LPDDR4, FBGA200, x32. One rank on the 4 GB board, auto-detected by both stacks. |
+| Controller limits (UM §3.2) | 32-bit DDR3/DDR3L/DDR4/LPDDR3/LPDDR4/LPDDR4X, up to 4 GB, up to 1200 MHz for LPDDR4 |
+| Clock used | **1200 MHz** (≈ LPDDR4-2400) in the SyterKit DT and as the U-Boot default for A523 |
+| Rails | VCC-DRAM = AXP717 DCDC3 (adjustable); VDD18-DRAM = ALDO4 1.8 V |
+| Parameter-select straps | DDR-PARA-SEL-ADC1/2 on GPADC1/GPADC2 (sheet 4). They let one firmware pick between DRAM parameter sets. |
+
+Board parameters, from SyterKit `boards/avaota-a1/board.dts` (U-Boot `avaota-a1_defconfig` uses the same ODT, drive and TPR values):
+
+| Field | Value | Meaning |
+|---|---|---|
+| `dram_clk` | `1200` | MHz |
+| `dram_type` | `8` | LPDDR4 |
+| `dx_odt` / `dx_dri` / `ca_dri` | `0x07070707` / `0x0d0d0d0d` / `0x0e0e` | Per-byte ODT and drive strength, CA drive strength |
+| `para0` | `0x84848484` | Allwinner's training log prints it as **write DQS**. U-Boot calls it `ODT_EN`. |
+| `mr14` | `0x08` | LPDDR4 MR14 (write Vref) |
+| `tpr6` | `0x38000000` | Read Vref |
+| `tpr10` | `0x802f3333` | Feature bits. U-Boot names: bit 20 write leveling, bit 21 read calibration, bit 22 read training, bit 23 write training, bits 17/18 DQ bit-delay. Only **read calibration and bit-delay** are enabled here. |
+| `tpr11` | `0xc7c5c4c2` | Write DQ delay, one byte per lane |
+| `tpr12` | `0x3533302f` | Read DQ delay, one byte per lane |
+| `tpr13` | `0x860` | Bit 11 = Allwinner soft DQ eye training **on**. Bit 10 = per-bit training **off**. |
+| `tpr14` | `0x48484848` | Read DQS delay |
+
+### 2.3 The three software stacks
+
+1. **Allwinner BSP boot0 + libdram (closed).** Parameters live in `[dram_para]` in `sys_config.fex`. Soft training ("眼图自适应", which needs T527 libdram ≥ V0.67) is controlled by `tpr13`: bit 11 runs a per-byte DQ eye scan, and bit 10 adds a per-bit scan. Excerpts from the example log in the guide:
+   ```
+   [SOFT TRAINING] Dbyte0 rdq 1st dqs_move:0,range: 36~68,width=36,center=0x34
+   [SOFT TRAINING] rdq00 move:0,range: 27~71,width=45,center=0x31
+   [SOFT TRAINING] rVREF:tpr6=0x3a000000 wVREF:mr14=0x0000000e
+   [SOFT TRAINING] rDQ: tpr12=0x38353234 wDQ: tpr11=0xd7d6d6d7
+   ```
+   Allwinner's rules of thumb:
+   - Eye width **< 32** steps means small margin. Width **< 24** points to a likely performance problem.
+   - To get fixed parameters, train 5–8 boards and take the middle value.
+   - Training runs once, at first boot or during USB flashing, and the result is written back to flash.
+   - Production firmware does not print the detailed log. Allwinner's DragonHD tool (Windows, in APST) shows it.
+2. **SyterKit** (YuzukiHD). It uses the same libdram blob, but the parameters live in a small DT and the build is fast. This is the easiest place to flip `tpr13` bits and read the boot log.
+3. **Mainline U-Boot SPL (open source).** The flow:
+   1. `mctl_sys_init`: sets PLL5 to 2× the DRAM clock and handles resets.
+   2. Detects rank, width and size at 360 MHz with safe delays.
+   3. Re-initialises at `CONFIG_DRAM_CLK`:
+      - `mctl_ctrl_init`: DesignWare-style controller, with helpers shared with H6/H616.
+      - `mctl_phy_init`.
+      - `mctl_phy_write_leveling`, `mctl_phy_read_calibration`, `mctl_phy_read_training` and `mctl_phy_write_training`, each gated by its TPR10 bit.
+      - `mctl_phy_bit_delay_compensation`, using `tpr11`/`tpr12`.
+
+   Read and write training read the left/right eye-edge registers of each lane (for example PHY `+0x850` vs `+0x898`, nine entries per group). Training fails if any window is ≤ 6 taps. **That check is a good place to add a `printf` and get your own per-bit eye report.**
+
+### 2.4 Suggested exercises
+
+1. Read `dram_sun55i_a523.c` next to the JEDEC LPDDR4 spec (JESD209-4) init and training sequence, and annotate every step.
+2. Build U-Boot `avaota-a1_defconfig`. Print the eye-edge registers, then turn on TPR10 bits 20/22/23 (hardware write leveling, read training, write training) and compare the results with the fixed `tpr11`/`tpr12`.
+3. Run a **shmoo**: sweep `CONFIG_DRAM_CLK` (Allwinner steps in 24 MHz), ODT, drive strength and Vref. Test each point with U-Boot `mtest`, Linux `memtester` or `stressapptest`, and plot pass/fail. Allwinner's own margin test runs DRAM **48 MHz above** the production frequency.
+4. **Voltage margining** with AXP717 DCDC3. Stay inside the LPDDR4 VDD2/VDDQ operating range (1.06–1.17 V).
+5. Set `tpr13` bit 10 in SyterKit and compare the vendor's per-bit eye widths with what the mainline training finds.
+6. Use **JTAG**: halt the SPL during training and change PHY delay registers live. Also dump `0x0313_0000` / `0x0314_0000` after the vendor blob finishes and diff them against mainline; this is how the mainline driver was reverse-engineered.
+7. Look at the SI side: open the LPDDR4 layout templates ([resource/dram_4l](1.hardware/Avaota-A1/resource/dram_4l), [resource/dram_8l](1.hardware/Avaota-A1/resource/dram_8l)) and the [T527 LPDDR4 IBIS model](<2.docs/docs/T527/Hardware硬件类文档/硬件设计/IBIS模型/t527_lpddr4_allwinner.ibs>) to see why the lanes train to different delays.
+
+### 2.5 Price and value
+
+Pine64 lists the 4 GB / 32 GB board at **$54.95** (checked 2026-10-22). The ~$75 figure probably includes shipping or comes from another store. For that money you get an LPDDR4 x32 platform with an open-source DRAM driver, FEL recovery and JTAG, which is very good value for learning.
+
+I picked this board because it is cheap. Section 2.6 checks whether an NXP i.MX board would be a better buy, and section 2.7 looks at whether DDR training is worth learning for the job market.
+
+### 2.6 Avaota-A1 vs NXP i.MX and other cheap boards
+
+**What NXP offers.** The NXP DDR tool is part of Config Tools for i.MX (a download that needs an NXP account). It is the standard workflow for i.MX board bring-up:
+
+- Generate the DDR configuration for your board.
+- Load a test image into on-chip RAM over USB. No flash or OS is needed.
+- Run training ("Firmware Init").
+- Run stress tests, including overnight runs.
+- Sweep ODT and Vref for DQ and CA.
+- Draw **virtual eye diagrams** (vTSA): RX/TX data eye, CA bus margin and CA eye, for LPDDR4.
+
+NXP lists support for i.MX 8M, 91, 93, 95, 943, 93W and 952. This is the tool employers expect you to know for i.MX boards.
+
+**What NXP does not offer either:**
+
+- The training itself is Synopsys DDR PHY firmware (the PMU binaries `lpddr4_pmu_train_*` in `firmware-imx`). NXP says the source is not available, not even to its customers.
+- U-Boot's `drivers/ddr/imx/imx8m/ddrphy_train.c` only loads that firmware, writes the message block, runs the PMU and reads back the result.
+- The reference manuals document the DDR controller but not the PHY. For example, the i.MX95 RM has chapter 114 DDRC with 122 register descriptions, but no PHY register chapter.
+
+**So the two boards teach different things.**
+
+- **NXP**: the industrial validation workflow, with polished visibility (eyes, margins, stress results).
+- **Avaota-A1**: what the init code actually does, with source code and JTAG.
+- Neither shows how the PHY's training engine works inside.
+
+Prices below were checked 2026-10-22. They are distributor snapshots and are not like-for-like on tax.
+
+| Board | SoC / CPU | DRAM | Price | DDR tooling | Open training code |
+|---|---|---|---|---|---|
+| **Avaota-A1 4 GB** | T527, 8× A55 | LPDDR4 x32, 4 GB | **$54.95** (Pine64) | Allwinner DragonHD (Windows) + libdram soft-training logs | **Yes**: mainline U-Boot (reverse-engineered) |
+| FRDM-IMX91S | i.MX91, 1× A55 1.4 GHz | LPDDR4, 512 MB | ~US$51 / €41.25 ex VAT (Farnell) | NXP DDR tool | U-Boot + Synopsys firmware blob |
+| FRDM-IMX91 | i.MX91, 1× A55 1.4 GHz | LPDDR4, 1 GB | ~S$108 / AU$120 ex GST (element14) | NXP DDR tool | same as above |
+| **FRDM-IMX93** (already owned) | i.MX93, 2× A55 1.7 GHz + M33 + NPU | LPDDR4X, 2 GB | ~$71–74 (Future), €69–71 (DigiKey) | NXP DDR tool | same as above |
+| MaaXBoard Mini | i.MX8M Mini, 4× A53 | LPDDR4 | $72.50 at launch (2020); now $149.95 with 0 stock (Avnet), €133 (Farnell) | NXP DDR tool (most mature target) | same as above |
+| FRDM-IMX8MPLUS | i.MX8M Plus, 4× A53 + NPU | LPDDR4 | ~$100–115 | NXP DDR tool | same as above |
+| **FRDM-IMX95** (already owned) | i.MX95, 6× A55 | LPDDR4X x32 (8 GB per QSG) | already paid | NXP DDR tool lists i.MX95 | same as above |
+| PocketBeagle 2 | TI AM6254, 4× A53 | 512 MB (LPDDR4 per CNX; one forum post says DDR4) | ~$29 | TI SysConfig DDR config + DDR-MARGIN-FW | **Yes**: U-Boot `k3-ddrss` (Cadence driver) |
+| STM32MP135F-DK | STM32MP135, 1× A7 | DDR3L x16, 512 MB, 533 MHz | ~€128 ex VAT (RS Italy) | CubeMX DDR test suite | **Yes**: software DQS gating, bit deskew and eye training in U-Boot SPL |
+
+**The two NXP chips you asked about:**
+
+- **i.MX8M Mini: skip it.** There is no cheap board any more. It is the most mature DDR-tool target, but the same tool runs on the newer and cheaper FRDM boards.
+- **i.MX91: the cheapest NXP DDR-tool target you can own** (FRDM-IMX91S, ~$51). The single A55 is weak, but CPU speed does not matter for DDR work. It has a 16-bit DRAM bus (2 byte lanes, vs 4 on Avaota-A1 and i.MX95), so there is less lane-to-lane variation to study.
+
+**You already own both FRDM-IMX93 and FRDM-IMX95 Pro, so the NXP side is covered. Don't buy more NXP boards.**
+
+- The DDR tool runs its test image from on-chip RAM over USB and does not touch the eMMC. You can learn the NXP workflow on either board for free.
+- The FRDM-IMX93 is the safer DDR-tool target. vTSA is listed for LPDDR4, and i.MX93 is a mature tool target.
+- On the FRDM-IMX95, check inside the tool whether it has a board config for it and whether vTSA works on i.MX95. I could not confirm either from NXP's page.
+
+**The only purchase left is the Avaota-A1.** It has FEL recovery, so DRAM experiments can't brick it, and it is easy to order.
+
+**Two non-NXP options:**
+
+- **TI PocketBeagle 2** (~$29) is the cheapest board with a vendor DDR flow.
+  - TI's SysConfig DDR tool lists IO calibration, command-bus training, write leveling, read gate, read leveling and Vref training.
+  - DDR-MARGIN-FW does a 2D Vref × delay sweep and draws a virtual eye. It supports LPDDR4 only, and loads over CCS/JTAG or UART boot.
+  - The U-Boot `k3-ddrss` driver is open source.
+  - Downsides: forum reports say the margin firmware is fiddly outside TI EVMs, and the memory type needs confirming first (LPDDR4 vs DDR4).
+- **STM32MP135F-DK** (~€128) is the most transparent platform for training *algorithms*.
+  - In U-Boot SPL's DDR interactive mode, DQS gating, bit deskew and eye training run in **software** (`stm32mp1_tuning.c`).
+  - The PHY delay registers (DXnDQTR, DXnDQSTR) are used by name in public code.
+  - Downsides: old DDR3L, a slow single A7, and twice the price.
+- An FPGA board running LiteDRAM is the fully open option (controller, PHY and software leveling). It costs more and runs at DDR3 speeds.
+
+**Plan:**
+
+1. Buy the **Avaota-A1** and make it the main DRAM board: cheap, strong, open code, JTAG, FEL.
+2. Learn the **NXP DDR tool on the FRDM-IMX93 / FRDM-IMX95** you already have. Use its vTSA eye output as the reference for what your own Avaota eye scan should look like (section 2.10).
+3. Add a PocketBeagle 2 later if you want a second vendor's (TI) workflow to compare.
+
+### 2.7 Is DDR training worth learning for the job market?
+
+There are two different markets.
+
+**1. DDR / memory PHY firmware engineer at chip companies.** This is the "training" job proper. It is real and well paid, but small.
+
+Postings found in October 2026:
+- AMD Memory PHY Firmware Engineer, Austin: DDR PHY + DRAM training steps + lab bring-up, $90k–130k.
+- AMD MTS, Bengaluru: DDR/LPDDR/HBM training algorithms.
+- Intel DDR PHY Firmware, Guadalajara: write/read leveling, Vref training, JEDEC; 5+ years.
+- Cadence principal firmware engineer for DDR5 PHY microcontrollers.
+- Astera Labs: DDR firmware for CXL memory products.
+- Qualcomm DDR PHY system design, San Diego: $140k–210k, leaning towards signal and power integrity.
+
+What these postings ask for, and where they are:
+- **Typical requirements:** EE/CE degree, JEDEC specs, C and Python, often Verilog/SystemVerilog simulation, post-silicon lab work, 5+ years.
+- **Location:** almost all US, India or Mexico. A quick search found none in the Netherlands, Germany or Romania, though that does not prove there are none.
+- **Tailwind:** the AI-driven memory crunch (HBM, LPDDR5X, LPDDR6, SOCAMM, CXL) adds memory complexity and investment. This is my inference from market reports, not from job counts.
+- **Limit of a hobby board:** it gives you the vocabulary and the flow. The real job happens on pre-production silicon, with PHY databooks and lab equipment.
+
+**2. DDR bring-up as part of embedded board bring-up.** There are far more of these jobs, but here DDR is a line on a CV rather than a job title. Every custom i.MX, TI or STM32MP board needs the same steps:
+- the vendor DDR tool configuration,
+- training, stress and margin checks,
+- working with the layout engineer when it fails.
+
+**What this means for you:**
+
+- **As an add-on to your embedded Linux / i.MX path: worth it, and cheap.** A few weeks gets you to "I can bring up and validate DDR on a custom i.MX board with the NXP DDR tool, and I understand what training does underneath". That is a real differentiator in board bring-up interviews.
+- **As a career switch: a narrow niche.** It is centred on the US and Asia, expects chip-company experience, and would compete with the camera/ISP roadmap for your time. Timebox it (for example 4–6 weeks) unless you decide to target memory-firmware roles at AMD, Intel or Qualcomm-type companies.
+
+### 2.8 Swapping the DRAM chip: how hard is it?
+
+**The hardware part is the hard and risky part. The software part is easy, as long as the new chip is the same type.**
+
+**What fits** (schematic sheet 5, BOM v1.7):
+
+- **Package:** a 200-ball LPDDR4 FBGA (footprint `BGA200P65_80B1000_1500H90`: 0.65 × 0.80 mm pitch, 10 × 15 mm). It is an x32 part with 2 channels of 16 bits. CS0 and CS1 are both wired, so 1-rank and 2-rank parts work. The controller limit is **4 GB**.
+- **LPDDR4 only, not LPDDR4X.**
+  - The board ties the DRAM's VDD2 and VDDQ and the SoC's PHY I/O rail (VCC-DRAML) together on VCC-DRAM, at **1.1 V**.
+  - The schematic note says LPDDR4X needs VCC-DRAML from a separate DC-DC converter at 0.6 V, which this board does not have.
+  - A part rated only for LPDDR4X would therefore run out of spec. Choose a part whose datasheet supports LPDDR4 at VDDQ = 1.1 V.
+- **Candidates:** [A523 DRAM support list V1.3](<2.docs/docs/A523/Hardware硬件类文档/硬件物料清单/Allwinnertech A523 DRAM Support List V1.3.xls>) in this repo. Confirm the package and voltage of each part in its datasheet.
+  - CXMT: CXDB3ABAM-MK-A, CXDB5CCBM-MJ-A, CXDBBCCBM-MK-B
+  - FORESEE: FLXC2004G-30 / -N1
+  - Nanya: NT6AN512T32AV-J2, NT6AN1024F32AV-J2
+  - Rayson: RS512M32LM4D2BDS-53BT, RS1G32LV4D2BDS-53BT
+  - SK hynix: H9HCNNNBKUMLXR-NEX (listed as both LPDDR4 and LPDDR4X)
+  - KALXX4S43AY2-T40 (vendor not given)
+- **The original chip** on the 4 GB board is not named in the BOM (it just says `LPDDR4_FBGA200`). Read the marking on yours.
+
+**Difficulty, step by step:**
+
+| Step | Difficulty | Notes |
+|---|---|---|
+| Remove the old chip, clean the pads, place the new one | **Hard** | Fine-pitch BGA rework needs hot air plus a bottom preheater, flux and a steady hand. The DRAM sits next to the T527 and the eMMC, so too much heat can kill them. Expect to lose a board or two while learning, or pay a phone-repair shop (they do LPDDR rework all the time). New chips come pre-balled. |
+| First boot | Easy | The FEL button and USB still work whatever the DRAM state, so a failed DRAM init cannot brick the board. |
+| Vendor libdram | Easy | Rank, width and size are auto-detected (`[AUTO DEBUG]32bit,2 ranks training success!`). The eye-adaptive guide says "one template, one parameter set: new parts of the same type need no new parameters", with soft training on (`tpr13` bit 11). |
+| Mainline U-Boot | Easy–moderate | Rank, width and size are also auto-detected, but the timings in `dram_timings/a523_lpddr4.c` are fixed. For example tRFC is 280 ns, tRAS 42 ns and tRC 65 ns. Check them against the new part's datasheet (tRFCab, speed bin). |
+| Validation | Moderate (time) | Check the soft-training eye widths (≥ 32 good, < 24 bad), then run U-Boot `mtest`, `memtester` or `stressapptest`, reboot loops and suspend/resume (self-refresh). Repeat warm and cold. |
+
+**Cheaper first step without soldering:** buy the **2 GB / 16 GB board ($39.95) next to the 4 GB one**. You get a second chip and a different density and rank setup, so you can compare training results, eye widths and margins before touching a hot-air gun.
+
+### 2.9 Reversing libdram
+
+The blob is a good reverse-engineering target. SyterKit's `soc/sun55iw3/lib/libdram.a`:
+
+- is a 32-bit ARM relocatable object (about 43 KB),
+- is **not stripped**, so all **66 functions keep their names**,
+- has its log strings intact (`Soft Training Version: %s`, `read dx%d_dq%d delay_width_error`, `[AUTO DEBUG]…`).
+
+Largest functions, in bytes:
+
+| Function | Size | What it probably is |
+|---|---|---|
+| `mctl_phy_dx_bit_delay_compensation` | 2778 | Per-bit DQ delays (`tpr11`/`tpr12`) |
+| `mctl_mdfs_init` | 2520 | Multi-frequency (DVFS) setup |
+| `mctl_com_set_channel_timing` | 2424 | Controller timings |
+| **`dst_dq_eye_scan`** | **1984** | **The soft-training eye scan: the algorithm you want** |
+| `phy_read_training` / `phy_write_training` | 1236 / 1072 | Kicks the hardware training engines |
+| **`dx_training`** | **892** | **Soft-training driver** |
+| `auto_scan_dram_config` / `_size` / `_rank_width` | 572 / 452 / 388 | Auto-detection |
+| `dst_dramc_memtester_test`, `mctl_neon_*` | — | NEON memory tests used as the pass/fail check |
+
+**What this means:**
+
+- The hardware-training functions (`phy_write_leveling`, `phy_read_calibration`, `phy_read/write_training`) match the mainline U-Boot functions one for one, so that part is already reversed. `mctl_phy_write_leveling` and the others in `dram_sun55i_a523.c` follow the same structure.
+- What is still closed is the **software training** (`dst_dq_eye_scan`, `dx_training`, `Get_rx_vref_value`) and MDFS. That code sweeps PHY delay and Vref registers and runs memory tests in plain ARM code. **Reversing it gives you a complete, real-world eye-scan training algorithm.** That is more than either the hardware engines here or NXP's Synopsys firmware will ever show you.
+- **Effort:** with Ghidra and symbols, about 3–4 KB of soft-training code is a few weeks of evenings.
+- **Legal:** EU law allows decompiling for interoperability. To publish, do what the mainline driver did: write your own notes and code, and don't post decompiled output.
+
+### 2.10 Filling the missing register documentation
+
+Reversing `dst_dq_eye_scan` gives you the **control flow**: loops, compare logic, how the eye center is picked. What's missing is the **meaning of the registers** it touches. The mainline H616 driver has the same problem and says so: *"PHY is completely unknown … Some meaning was nevertheless deduced from strings found in boot0 and known meaning of some dram parameters."*
+
+Split the problem into four layers. Each one has a different source.
+
+| Layer | Where | Status | What fills it |
+|---|---|---|---|
+| **DRAM chip** (mode registers MR1–MR22: ODT, drive, Vref, latency; training commands) | Inside the LPDDR4 chip | **Fully documented** | JEDEC JESD209-4 (free with a JEDEC account) and any LPDDR4 vendor datasheet (Micron MT53, Nanya NT6AN, …) |
+| **Memory controller** (`MEMC_DDRC`, `0x0313_0000`) | T527 | **Documented elsewhere** | It is a Synopsys DesignWare **uMCTL2**. Mainline's `struct sunxi_mctl_ctl_reg` uses uMCTL2 names at uMCTL2 offsets (MSTR `0x000`, PWRCTL `0x030`, RFSHTMG `0x064`, DRAMTMG `0x100`, ZQCTL `0x180`, DFITMG `0x190`, ADDRMAP `0x200`, SWCTL `0x320`). The same IP is documented bit by bit in the **i.MX 8M Mini/Plus RM** (DDRC chapter; free with your NXP account), **AMD/Xilinx UG1087** (Zynq UltraScale+ register reference, `DDRC` module, public) and **ST RM0436** (STM32MP15 `DDRCTRL`). Cross-check fields against mainline, because versions differ. Note that i.MX93/95 use a different NXP controller, so their RMs don't help here. |
+| **Controller ↔ PHY interface** (DFI timings: `dfitmg*`, `dfiupd*`, `dfimisc`) | Between them | **Documented** | The DFI specification (from ddr-phy.org) |
+| **PHY** (`MEMC_PHY`, `0x0314_0000`): delay lines, Vref, training engines, eye-edge results | T527 | **Undocumented**, Allwinner's own PHY | Fill it in yourself, using the steps below |
+
+**How to fill the PHY layer:**
+
+1. **Start from known names.**
+   - The mainline A523 driver uses 209 distinct PHY offsets. **78 of them also appear in the H616/H618 driver**, so it is the same PHY family, and the earlier drivers' comments and structure carry over.
+   - Allwinner's eye-adaptive guide gives the parameter meanings: `tpr11` = write-DQ delay, `tpr12` = read-DQ delay, `tpr14` = read-DQS, `para0` = write-DQS, `tpr6` = read Vref, `mr14` = write Vref, `tpr13` bits 10/11 = soft training, plus the TPR10 bits in mainline.
+   - The blob's log strings (`read dx%d_dq%d delay_width_error`, `dx_low 16bit read training error`) label the registers read right next to them.
+   - The full parameter reference, *T527_DRAM 配置参数说明 V1.5*, is cited by the eye guide but is not in this repo. Ask Allwinner, or look for it in SDK dumps.
+2. **Trace the data flow in Ghidra.** Follow each known parameter (for example `tpr12` byte 0) from `init_DRAM`'s argument to the `str` that writes it into a PHY register. That register field is then "read DQ delay, lane 0". This is how most of mainline was named.
+3. **Black-box mapping with FEL (no JTAG needed).** Load a SyterKit DRAM-init app with xfel, change one parameter by one step, re-init, and dump `0x0314_0000`–`0x0314_0FFF` (and the DDRC). Diff against the previous dump. Each diff names one register field. A script can run hundreds of these loops unattended, and FEL guarantees the board always comes back.
+4. **Call the blob's own functions.** Its symbols are global, so a SyterKit app can call `dst_dq_eye_scan()`, `phy_read_training()` and the others directly, once you have reversed their prototypes. You can then run them with your own inputs and log the results (a "harness").
+5. **Catch writers with JTAG.** Put an A55 hardware watchpoint on one PHY register address to see exactly which blob function writes it, and with which value.
+6. **Measure what the docs would have told you.**
+   - **Tap size:** sweep a read-delay field while reading a known pattern. The number of taps it takes for the data to shift by one bit equals one UI. At 1200 MHz (2400 MT/s) one UI is about 417 ps, so ps/tap = 417 / taps.
+   - **Vref steps:** sweep the Vref field until the eye closes at the top and bottom. Compare against the JEDEC MR14 Vref table for the DRAM side.
+7. **Use your NXP boards as the reference.** Run vTSA on the FRDM-IMX93 to see what a correct delay × Vref pass/fail grid looks like. Rebuild the same grid on Avaota from your reversed `dst_dq_eye_scan` and the fields you mapped. If both look alike, your understanding is right.
+
+**What stays unknown even after all this:** what happens *inside* the PHY's hardware training engines (write leveling, gate, read/write training), and absolute analog details beyond what you can measure. Everything the software eye scan does is recoverable.
+
+### 2.11 Avaota-A1 vs FRDM-IMX93: same RAM, different PHY?
+
+A DRAM subsystem has three parts, and only the last one is common between the two boards:
+
+```
+CPU cores ── interconnect ── [ memory controller ] ──DFI── [ PHY ] ═══ PCB ═══ [ LPDDR4(X) chip ]
+                               scheduling, timings,          I/O pads, delay      JEDEC protocol,
+                               refresh, address map          lines, Vref, ODT,    mode registers,
+                                                             training logic       no CPU inside
+```
+
+| | Avaota-A1 (T527) | FRDM-IMX93 |
+|---|---|---|
+| DRAM chip | LPDDR4 x32 (2 × 16-bit channels), VDDQ **1.1 V** | Micron **MT53E1G16D1FW-046 AAT:A**, **x16** single channel, 2 GB (UM12181). The part supports both LPDDR4 and LPDDR4X modes (NXP compatibility guide). The board runs it as LPDDR4X (U-Boot uses `lpddr4x_*_timing.c`), so VDDQ is **0.6 V**. |
+| Controller | Synopsys uMCTL2-style (see 2.10) | NXP DDRC |
+| PHY | Allwinner's own PHY with fixed hardware training engines (state machines). Mainline drives everything with register writes and polling, and shows no sign of a processor inside. | Synopsys DWC LPDDR4/4X PHY with an embedded **microcontroller (PMU)** |
+| Who runs training | The **A55 CPU**. boot0/libdram or U-Boot SPL starts the hardware engines, then runs the software eye scan (`dst_dq_eye_scan`) itself. | The **PMU inside the PHY** runs Synopsys training firmware (`lpddr4*_pmu_train_*` / `*_imem_*` binaries). U-Boot only loads it and reads back the result message block. |
+| Step through it with JTAG? | Yes, it's A55 code | No, it runs inside the PHY |
+
+**Same RAM chip on both boards? Not in practice.**
+
+- **Width:** the i.MX93 has a x16 interface, while Avaota is wired x32.
+- **Voltage:** the FRDM-IMX93 runs VDDQ at 0.6 V (LPDDR4X), while Avaota ties VDDQ to 1.1 V (LPDDR4). A part works on both only if its datasheet explicitly supports both modes. The FRDM's Micron part does support both, but it is x16 single channel, so Avaota could at best run it 16 bits wide. `libdram` has a 16-bit auto-detect path, but this is untested and not worth the rework.
+- **Rework:** each move is a fine-pitch BGA rework job on both boards.
+
+**What *is* the same** is the JEDEC LPDDR4 protocol: commands, mode registers (MR11 ODT, MR12/MR14 Vref, …) and the training ideas (write leveling, DQS gating, read/write eye, Vref). So compare **methods and results** across the two boards, for example eye width in ps and Vref window in mV, rather than the same physical chip.
+
+### 2.12 JTAG on the FRDM-IMX93: what it adds for DDR training
+
+**Getting debug access.** Sources: NXP's community post *How to use J-Link on FRDM-IMX93* (saved in [2.docs/jlink-imx93](2.docs/jlink-imx93)) and SEGGER's i.MX93 wiki page.
+
+| | |
+|---|---|
+| Interface | **SWD**. VREF is **1.8 V**, taken from TP707. Remove **R3017 and R3018**. |
+| Boot switch | SW1 = `1001`: serial download, M33 only. SW1 = `0011`: A55 boot. NXP's log shows the A55 reached at the U-Boot prompt. |
+| DAP | DPIDR `0x5BA02477`, CoreSight SoC-400. AP0 = AHB-AP, **AP1 = APB-AP (A55)**, AP2 = MEM-AP, AP3 = AHB-AP (M33). |
+| A55 debug | core 0 at **`0x80810000`**, CTI at `0x80820000`. Same base as the FRDM-IMX95's measured `0x80810000`. |
+| SEGGER's caveats | The A55 needs a boot image that enables debug. There is no generic core reset. Disable caches before downloading code. |
+
+**Where DDR training runs.**
+
+- **i.MX93:** in U-Boot SPL **on the A55**. The call chain is `spl_dram_init()` → `ddr_init()` → `ddr_cfg_phy()`. `ddr_cfg_phy()` does the following:
+  1. Loads the Synopsys PMU firmware into the PHY (IMEM `0x50000`, DMEM `0x54000`).
+  2. Writes the message block.
+  3. Starts the PMU (`0xd0099`).
+  4. Polls the mailbox (`0xd0004/31/32/34`).
+  5. Reads the results (CDD).
+  6. Loads the PIE (the PHY Init Engine program).
+  7. Saves the trained CSRs.
+
+  For FRDM-IMX93 (mainline `board/nxp/imx93_frdm/lpddr4x_1gb_timing.c`):
+  - 1D training runs at 3733, 1866 and 625 MT/s, plus 2D at 3733.
+  - `SequenceCtrl = 0x131f`: DevInit, WrLvl, RxEn, RdDQS1D, WrDQ1D, RdDeskew, MxRdLat, LPCA (CA training).
+  - `HdtCtrl = 0xC8`: stage-completion messages only.
+- **i.MX95:** DDR init runs in the **OEI on the Cortex-M33**, before the A55 starts. The `frdm-imx95-pro-jtag` notes rate M33 debug as low-confidence because of the ELE. **So the i.MX93 is the easier NXP board for watching DDR init.**
+
+**What JTAG adds on the i.MX93 (untested):**
+
+1. **Edit the message block before the PMU starts.** Break in `ddr_cfg_phy()` just before the `0xd0099` writes, then poke DMEM and resume. For example:
+   - Run one training step at a time through `SequenceCtrl`.
+   - Raise the verbosity with `HdtCtrl` = `0x05` (eye delays) or `0x04` (eye contours). The PMU then streams them through the mailbox, which U-Boot's `decode_streaming_message()` reads as string indices and arguments.
+   - Change the Vref and MR fields.
+
+   No rebuild is needed.
+2. **Dump the results.** That means the message block after training, and every PHY CSR in the board file's `ddr_ddrphy_trained_csr[]` list (the trained delays).
+3. **Name everything with ST's open Synopsys PhyInit sources.** TF-A for STM32MP2 includes these, BSD-licensed:
+   - `drivers/st/ddr/phy/phyinit/include/ddrphy_csr_all_cdefines.h` (~6,900 lines of CSR names),
+   - `drivers/st/ddr/phy/firmware/include/mnpmusrammsgblock_lpddr4.h` (message-block fields with descriptions).
+
+   NXP's PMU control writes match ST's names:
+   - `0xd0000` = MicroContMuxSel
+   - `0xd0004` = UctShadowRegs
+   - `0xd0031` = DctWriteProt
+   - `0xd0032` = UctWriteOnlyShadow
+   - `0xd0034` = UctDatWriteOnlyShadow
+   - `0xd0099` = MicroReset
+
+   Layouts can differ between firmware versions, so check each field against the values U-Boot writes.
+4. **What JTAG still can't do:** step the PMU firmware. It runs on a microcontroller inside the PHY, which is not on the DAP.
+
+Points 1 and 2 also work without JTAG: edit the timing file and build SPL with `DEBUG`. JTAG removes the rebuild loop and still works when training hangs.
+
+**CH347F on the FRDM-IMX93.** Feasible, with three changes from the FRDM-IMX95 setup:
+
+- **Level:** set the module to **1.8 V I/O**, or use a level shifter. The FRDM-IMX95 and T113 setups ran at 3.3 V.
+- **Protocol:** SWD only. OpenOCD's CH347 driver limits SWD to 5 MHz.
+- **Config:** OpenOCD has no upstream `imx93.cfg`. Copy `frdm-imx95-pro-jtag/openocd/target/imx95.cfg` and change it as follows:
+  - SWD ID `0x5ba02477`;
+  - 2 A55s instead of 6, at `0x80810000` (core 1 probably at `+0x100000` like the i.MX95, unverified);
+  - drop the M7;
+  - M33 on AP3.
+
+**Getting debug before DDR init:** NXP's post only shows the A55 at the U-Boot prompt, after DDR is up. To catch SPL before `ddr_init()`:
+1. Boot SPL over `uuu` (SDP).
+2. Add a spin loop on a volatile flag at the start of `spl_dram_init()`.
+3. Attach, clear the flag, and continue.
+
+### 2.13 FRDM-IMX93 as a DDR learning board: compatible parts, what it teaches, its limits
+
+**Which board for what:**
+
+| Board | Best for |
+|---|---|
+| **FRDM-IMX93** | **The industrial workflow:** NXP DDR tool, Synopsys PHY plus PMU firmware, message block, vTSA, and A55 JTAG during SPL |
+| **Avaota-A1** | **Algorithm internals:** a software eye scan that runs on the CPU and can be reversed; open mainline driver; FEL |
+| FRDM-IMX95 Pro | LPDDR5 at 6400 MT/s, x32, 16 GB. DDR init runs in the OEI on the M33, which is harder to watch. |
+
+**i.MX93 DRAM limits** (NXP product page, i.MX 93 Memory Compatibility Guide, AN14012):
+
+- **Interface:** x16 LPDDR4/LPDDR4X with inline ECC.
+- **Speed:** up to **3733 MT/s** on the 11x11 package, 3200 MT/s on the 9x9 package. FRDM-IMX93 trains at 3733 / 1866 / 625 MT/s.
+- **Size:** at most **16 Gb (2 GB)**, single rank, single channel, 17 row address bits.
+
+**Compatible parts.** These are from NXP's i.MX 93 Memory Compatibility Guide, as seen in search snippets; the full page is behind Cloudflare. All are x16, 200-ball. NXP notes that the table is updated over time, has footnotes (4, 8, 10) not read here, and that some parts may not run at low speed or with DQ ODT active. Open the guide before buying.
+
+| Density | Vendor | Part | Mode |
+|---|---|---|---|
+| 16 Gb / 2 GB | Micron | **MT53E1G16D1FW-046 AAT:A** (on the FRDM; DigiKey lists it obsolete) | LPDDR4 + LPDDR4X |
+| 16 Gb / 2 GB | Micron | **MT53E1G16D1ZW-046 AAT:C** (DigiKey's suggested replacement) | LPDDR4/4X |
+| 16 Gb / 2 GB | Kingston | D1611PM3BDGUI-U, C1612PC2WDGTKR-U | LPDDR4 |
+| 8 Gb / 1 GB | Micron | MT53D512M16D1DS-046 AAT | LPDDR4/4X |
+| 8 Gb / 1 GB | Nanya | NT6AN512M16AV-J1I (LPDDR4), NT6AP512M16BV-J1I (LPDDR4X) | see Part column |
+| 4 Gb / 512 MB | Nanya | NT6AP256M16AV | LPDDR4X |
+| 4 Gb / 512 MB | ISSI | IS43LQ16256B-062BLI | LPDDR4 |
+| 2 Gb / 256 MB | ISSI | IS43LQ16128A-062BSLI | LPDDR4 |
+
+Micron's own chart lists 8 Gb and 16 Gb MT53, x16, 200-ball TFBGA parts for i.MX 93x.
+
+**Two extra constraints on the FRDM board itself:**
+
+- **Voltage.** The board runs LPDDR4X (VDDQ 0.6 V), so a drop-in replacement must support LPDDR4X mode. LPDDR4-only parts (the Kingston, the ISSI, Nanya NT6AN…) also need the DRAM VDDQ and the SoC's DRAM I/O rail moved to 1.1 V. That is a PMIC/board change, not a chip swap.
+- **Size and timings.** U-Boot already ships FRDM timings for 1 GB and 2 GB (`lpddr4x_1gb_timing.c`, `lpddr4x_1cs_2gb_timing.c`, `lpddr4x_2cs_2gb_timing.c`). For any other part, generate a new timing file with the NXP DDR tool.
+
+**What it teaches that industry uses:**
+
+- **The NXP flow, as done on every custom i.MX board:**
+  1. DDR tool configuration.
+  2. `lpddr4x_timing.c` in U-Boot.
+  3. Training.
+  4. Overnight stress test.
+  5. vTSA margins.
+  6. ODT, drive and Vref tuning.
+  7. Temperature validation.
+
+  It's the same tool across i.MX 8M, 91, 93 and 95.
+- **The Synopsys PHY plus training-firmware model** (message block, `SequenceCtrl`, `HdtCtrl`, CDD, trained CSRs). NXP, ST (STM32MP2) and others use it, so it transfers.
+- **Real margins at a real speed.** At 3733 MT/s, one UI is about 268 ps. That is tighter than Avaota's 2400 MT/s (417 ps).
+- **Industrial features:**
+  - inline ECC, to try on this board;
+  - three frequency set points (DRAM DVFS);
+  - self-refresh and retention.
+
+**What it can't teach:**
+
+- **Width and topology:** x16 only, 1 channel, 1 rank. No x32/x64 lane-to-lane effects, no multi-rank or dual-channel behaviour. The i.MX95 is x32.
+- **Newer DRAM types:** no LPDDR5 (WCK clocking; the FRDM-IMX95 Pro has it at 6400 MT/s), no DDR4/DDR5 fly-by and DIMMs.
+- **Writing a training algorithm:** the PMU firmware is closed. You learn to drive and judge it, which is what the industrial job is. Writing one is the chip-company job; for that, use the Avaota soft training.
+- **Bad boards:** the FRDM is a reference layout that passes. To see margin loss, induce it: lower Vref, change ODT or drive strength, raise the frequency, or heat and cool the board.
+
+**Is the i.MX93 limited by RAM size and speed?** Yes: 2 GB maximum and 3733 MT/s. For learning DDR training, though, the size is irrelevant, and 3733 MT/s is already fast. The real limits are **x16 single-channel and no LPDDR5**. Those are covered by your FRDM-IMX95 Pro when you need them.
+
+**A link back to Avaota:** `libdram` contains `ddrphy_phyinit_C_initPhyConfig`. That is exactly the name of Synopsys PhyInit step C, the same step as ST's `ddrphy_phyinit_c_initphyconfig.c`, so Allwinner's code borrows at least the PhyInit naming and structure. Compare that function in Ghidra against ST's open source. Don't assume the T527 PHY *is* Synopsys, though: the mainline H616 driver calls its PHY "completely unknown" and different from the H6's.
+
+### 2.14 The sequence, step by step: which parts are blobs
+
+![DDR init and training: what is open, what is a blob](ddr-init-blob-map.svg)
+
+[`ddr-init-blob-map.svg`](ddr-init-blob-map.svg) has three columns: the Avaota vendor path, the Avaota mainline path, and the FRDM-IMX93. A yellow band steps through the rows when the SVG is opened in a browser.
+
+| Step | Avaota-A1 · vendor (`libdram`) | Avaota-A1 · mainline U-Boot | FRDM-IMX93 |
+|---|---|---|---|
+| 1. Load the init code | ROM → boot0 / SyterKit (or FEL) | ROM → SPL (or FEL) | ROM + **ELE** (signed) → SPL (or SDP) |
+| 2. Clocks, voltage | blob on the A55 | open | open |
+| 3. Controller setup | blob on the A55 | open | open code + tool-made values |
+| 4. PHY setup, ZQ | blob on the A55 (`ddrphy_phyinit_C_initPhyConfig`…) | open, magic offsets | open code + tool-made CSR values |
+| 5. Load training firmware | — | — | **blob** → PHY IMEM/DMEM, plus the message block (data) |
+| 6. Training | blob code starts the **PHY hardware engines** | open code starts the same engines (TPR10 bits) | **blob inside the PHY's MCU** (WrLvl, RxEn, Rd/WrDQ, deskew, CA, 2D); SPL only polls and reads results |
+| 7. Per-bit delays, eye scan | blob on the A55: **software eye scan** (`dst_dq_eye_scan`) | open, fixed delays, no eye scan | PIE program (opaque data); eye centering already done in the PMU |
+| 8. Size, hand off | blob on the A55 (auto-scan, write-back) | open (auto-detect) | open (timing table, CSR save) |
+
+**How to read it.**
+
+- On the Avaota, every blob runs on the **CPU**, so you can step and reverse it. The only true black boxes are the PHY's hardware engines.
+- On the i.MX93, everything around training is open. The training itself is a blob running **inside the PHY**, out of reach of JTAG. You control its inputs (the message block) and read its outputs (results, mailbox stream, trained CSRs).
+
+### 2.15 Closed training firmware is the norm; recovery on the FRDM-IMX93
+
+**Nobody publishes PHY training firmware.**
+
+- **Why it stays closed:** it is licensed IP (Synopsys, Cadence, …), it encodes the PHY's analog characterisation, and its quality is a selling point. The SoC vendor gets a binary and may not publish its source. NXP ships the Synopsys PMU images as binaries in `firmware-imx`, under its EULA.
+- **What *is* public:**
+  - the DRAM side (JEDEC),
+  - the controller (in the RM),
+  - the PHY's register names and init flow (ST published Synopsys PhyInit in TF-A).
+- **Counter-examples exist, much like the reverse-engineered GPU drivers:**
+  - Allwinner (mainline U-Boot, reverse-engineered),
+  - coreboot's native RAM init for older Intel chipsets,
+  - LiteDRAM on FPGAs.
+
+**So the numbers are the industrial skill.** A board engineer rarely writes training code. They:
+
+- choose the configuration (timings, MRs, ODT, drive strength, Vref, frequency set points);
+- run training and read its results (trained delays, Vref, CDD);
+- prove the margins with stress tests, vTSA and temperature;
+- tell a layout problem apart from a configuration problem or a bad part.
+
+Exercises on the FRDM-IMX93:
+
+- Diff the 1 GB and 2 GB timing files.
+- Regenerate the timing file for MT53E1G16D1ZW with the DDR tool, and diff it against the current one.
+- Change ODT or drive strength and watch the vTSA eye change.
+- Compare the per-lane trained delays with the trace lengths in the FRDM layout.
+
+**Recovery when DDR init fails: the FRDM-IMX93 can't be bricked either.**
+
+- **SPL runs from on-chip RAM (OCRAM).** `flash.bin` contains the ELE container, SPL and the DDR training firmware. The ROM loads it into OCRAM, and SPL loads the training firmware from there into the PHY. DRAM is needed only *after* `ddr_init()`, for ATF and U-Boot proper.
+- **The backup is the ROM's serial downloader.**
+  1. Set SW1[3:0] = `0001`.
+  2. Connect USB-C to P2, the console to P16, and power to P1.
+  3. Run `uuu` to load a fixed `flash.bin` straight into OCRAM. The eMMC is not touched.
+
+  This is how the NXP DDR tool runs its test image too. Other options: SD boot (`0011`), or reflash the eMMC with `uuu -b emmc_all`. The default `0010` is eMMC.
+- **Falcon mode doesn't help here.** It only makes SPL boot Linux directly, skipping U-Boot proper, which is about boot time. It still needs working DRAM.
+
+| | Avaota-A1: FEL | FRDM-IMX93: serial downloader (SDP) |
+|---|---|---|
+| Lives in | Boot ROM; needs no DRAM | Boot ROM; needs no DRAM |
+| Entry | FEL button | SW1 = `0001` |
+| Accepts | Any read, write or execute command (`xfel`) | A boot image (`flash.bin`) via `uuu` |
+| Peek/poke without a debugger | Yes | No: use SWD/JTAG |
+| DDR iteration loop | `xfel` a DRAM-init payload, read the registers back | Edit `lpddr4x_timing.c` → rebuild `flash.bin` → `uuu -b spl flash.bin`, or use the NXP DDR tool |
+
+---
+
+## 3. Sources
+
+Local (this repo):
+
+- [Schematic v1.7](<1.hardware/Avaota-A1/hardware/v1.7/01_SCH/SCH_Avaota Pi A_2_2024-08-30.pdf>): sheet 3 (power), 4 (FEL, JTAG-SEL, boot straps), 6 (PB/PF), 7 (PL/PM), 9 (microSD, 40-pin header, RGB FPC). The JTAG nets are also present in schematics v1.2–v1.6.
+- [BOM v1.7](<1.hardware/Avaota-A1/hardware/v1.7/04_BOM/BOM_Avaota Pi A_PCB1_2024-08-17.xlsx>)
+- [A527 User Manual V0.97](<2.docs/docs/A527/Hardware硬件类文档/芯片手册/A527_User_Manual_V0.97.pdf>): §3.2 DRAMC, §8.6 GPIO (`PF_CFG0`), §9.1.4 secure debug
+- [A527 Datasheet V0.96](<2.docs/docs/A527/Hardware硬件类文档/芯片手册/A527_Datasheet_V0.96.pdf>), [T527 Datasheet V0.95](<2.docs/docs/T527/Hardware硬件类文档/芯片手册/T527_Datasheet_V0.95.pdf>): JTAG signals, JTAG-SEL
+- [A527 hardware design guide V1.2](<2.docs/docs/A527/Hardware硬件类文档/硬件设计/设计指南/A527硬件设计指南_V1.2.pdf>): JTAG-SEL table, §2.9 Debug
+- [T527&T536 DRAM eye-adaptive guide V2.2](<2.docs/docs/T527/Hardware硬件类文档/硬件设计/DDR眼图自适应文档/T527&T536 Dram数据眼图自适应客户指导V2.2.pdf>)
+- [DRAM compatibility test guide V1.21](<2.docs/docs/T527/Hardware硬件类文档/硬件物料清单/DRAM兼容性测试指南V1.21.pdf>)
+- [Linux SPL-PUB guide](<2.docs/docs/Software 软件类文档/SDK模块开发指南/Others/Linux_SPL-PUB_开发指南.pdf>) (boot0 flow), [Tina config guide](<2.docs/docs/Software 软件类文档/基础组件开发指南/Sundry/Tina_Linux_配置_开发指南.pdf>) (`[jtag_para]`), [Tina security guide](<2.docs/docs/Software 软件类文档/基础组件开发指南/SECURE/Tina_Linux_安全_开发指南.pdf>) §9.5
+
+Upstream:
+
+- xfel: [chips/a523_a527_t527.c](https://github.com/xboot/xfel/blob/main/chips/a523_a527_t527.c), [chips/r528_t113.c](https://github.com/xboot/xfel/blob/main/chips/r528_t113.c)
+- SyterKit: [boards/avaota-a1](https://github.com/YuzukiHD/SyterKit/tree/main/boards/avaota-a1), [drivers/dram/dram-sun55iw3.c](https://github.com/YuzukiHD/SyterKit/blob/main/drivers/dram/dram-sun55iw3.c)
+- U-Boot: [dram_sun55i_a523.c](https://github.com/u-boot/u-boot/blob/master/arch/arm/mach-sunxi/dram_sun55i_a523.c), [avaota-a1_defconfig](https://github.com/u-boot/u-boot/blob/master/configs/avaota-a1_defconfig), [A523 DRAM patch (v2 13/20)](https://lists.denx.de/pipermail/u-boot/2025-July/594555.html)
+- OpenOCD: [ch347 driver](https://openocd.org/doc/doxygen/html/ch347_8c_source.html), [allwinner_h618.cfg](https://github.com/openocd-org/openocd/blob/master/tcl/target/allwinner_h618.cfg), [rk3588.cfg](https://github.com/openocd-org/openocd/blob/master/tcl/target/rk3588.cfg)
+- NXP: [Config Tools for i.MX (DDR tool)](https://www.nxp.com/design/design-center/development-boards-and-designs/i-mx-evaluation-and-development-boards/config-tools-for-i-mx-applications-processors:CONFIG-TOOLS-IMX), [DDR Tool User Guide (2021, vTSA FAQ)](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/blog/109/3/DDR%20Tool%20User%20Guide_v10.pdf), [U-Boot ddrphy_train.c](https://git.openwrt.org/project/bcm63xx/u-boot/tree/drivers/ddr/imx/imx8m/ddrphy_train.c), [LPDDR4 PMU binaries thread](https://community.nxp.com/t5/i-MX-Processors/LPDDR4-bin-binaries-for-i-MX8M/m-p/1367577), the i.MX95 RM (chapter 114 DDRC) and FRDM-IMX95 QSG in `~/praxis/imx`
+- i.MX board prices: [FRDM-IMX91/91S (element14/Farnell)](https://au.element14.com/nxp/frdm-imx91/frdm-dev-board-arm-cortex-a55/dp/4680634), [FRDM-IMX91S (Farnell FR)](https://fr.farnell.com/nxp/frdm-imx91s/kit-de-dev-frdm-64-bits-arm-cortex/dp/4753107), [FRDM-IMX93 (Future)](https://futureelectronics.com/p/development-tools--microcontroller-microprocessor--multimedia/frdm-imx93-nxp-9193266), [FRDM-IMX93 (DigiKey)](https://www.digikey.ie/en/products/detail/nxp-usa-inc/frdm-imx93/25675806), [MaaXBoard Mini (Avnet)](https://avnet.com/americas/products/avnet-boards/avnet-board-families/maaxboard/maaxboard-mini), [MaaXBoard Mini launch](https://www.businesswire.com/news/home/20200722005209/en/), [FRDM-IMX8MPLUS (Farnell)](https://export.farnell.com/nxp/frdm-imx8mplus/development-board-arm-cortex-a53/dp/4748406)
+- TI: [DDR register configuration tool docs](https://dev.ti.com/tirex/content/Processor_DDR_Config_0.10.10.0000/docs/README.html), [DDR-MARGIN-FW](https://www.ti.com/tool/download/DDR-MARGIN-FW), [margin FW is LPDDR4-only](https://e2e.ti.com/support/processors-group/processors/f/processors-forum/1487648/processor-sdk-am62x-ddr-margin-fw-for-ddr4-sdram), [PocketBeagle 2 rev A1 (CNX)](https://www.cnx-software.com/2025/05/22/pocketbeagle-2-rev-a1-board-gets-1-4-ghz-sitara-am6254-quad-core-cortex-a53-cortex-m4f-soc-with-3d-gpu/), [PocketBeagle 2 memory thread](https://forum.beagleboard.org/t/pocketbeagle-2-memory-sizes/40979)
+- ST: [STM32MP135F-DK](https://www.st.com/en/evaluation-tools/stm32mp135f-dk.html), [RS Italy price](https://it.rs-online.com/web/p/strumenti-di-sviluppo-per-microcontrollori/2615098), [U-Boot SPL DDR interactive mode](https://wiki.st.com/stm32mpu-ecosystem-v3/wiki/U-Boot_SPL:_DDR_interactive_mode), [DDRCTRL/DDRPHYC DT configuration](https://wiki.st.com/stm32mpu/wiki/DDRCTRL_and_DDRPHYC_device_tree_configuration)
+- Jobs: [AMD Memory PHY FW (Austin)](https://www.jobleads.com/us/job/memory-phy-firmware-engineer-ddr-lpddr--austin--eca55330dc134d678816ab0f2c8394cc3), [AMD DDR/LPDDR FW (Bengaluru)](https://www.electronicsforu.com/career/firmware-engineer-ddr-lpddr-amd-bengaluru), [Intel DDR PHY FW](https://intel.wd1.myworkdayjobs.com/External/job/Mexico-Guadalajara/DDR-PHY-Firmware-Engineer_JR0285805), [Cadence principal FW](https://cadence.wd1.myworkdayjobs.com/en-US/External_Careers/job/Principal-Firmware-Engineer_R53293), [Astera Labs DDR FW lead](https://theorg.com/org/astera-labs/jobs/tech-lead-firmware-engine-89478810), [Qualcomm DDR PHY system design](https://bebee.com/us/jobs/ddr-phy-system-design-engineer-san-diego-us-qualcomm-san-diego-ca--t7xk-793302983), [ZipRecruiter DDR PHY engineer](https://www.ziprecruiter.com/Jobs/Ddr-Phy-Engineer), [memory market 2026 overview](https://intuitionlabs.ai/articles/hbm-dram-ai-memory-demand)
+- FRDM-IMX93 debug and DDR: [2.docs/jlink-imx93](2.docs/jlink-imx93) (NXP community post, saved), [FRDM-IMX93 user manual UM12181](https://mouser.com/pdfDocs/FRDM-IMX93_UM.pdf), U-Boot [ddrphy_train.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_train.c), [ddrphy_utils.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_utils.c), [imx9 ddr_init.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/imx9/ddr_init.c), [imx93_frdm board](https://github.com/u-boot/u-boot/tree/master/board/nxp/imx93_frdm), TF-A Synopsys PhyInit for STM32MP2: [CSR names](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/phyinit/include/ddrphy_csr_all_cdefines.h), [LPDDR4 message block](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/firmware/include/mnpmusrammsgblock_lpddr4.h)
+- i.MX93 memory: [i.MX 93 Memory Compatibility Guide](https://community.nxp.com/t5/i-MX-Processors-Knowledge-Base/i-MX-93-Memory-Compatibility-Guide/ta-p/1725656), [Micron memory support for NXP (chart)](https://assets.micron.com/adobe/assets/urn:aaid:aem:09a7fea5-83ad-4f34-be20-136408496e91/renditions/original/as/nxp-compatibility-chart.pdf), [AN14012](https://nxp.com/docs/en/application-note/AN14012.pdf), [i.MX 93 product page](https://nxp.com/imx93), [MT53E1G16D1FW-046 AAT:A (DigiKey)](https://www.digikey.at/en/products/detail/micron-technology-inc/MT53E1G16D1FW-046-AAT-A/17632190), [i.MX 95 industrial datasheet](https://www.nxp.com/docs/en/data-sheet/IMX95IEC.pdf), [FRDM-IMX95 Pro LPDDR5-6400 (CNX)](https://www.cnx-software.com/2026/08/11/nxp-frdm-imx95-pro-i-mx-95-board-features-10gbe-faster-6400-mt-s-lpddr5-memory-dual-m-2-expansion/)
+- Board: [Pine64 store](https://pine64.com/?p=358314), [Pine64 docs](https://pine64.org/documentation/Yuzuki_Avaota-A1/_full/), [CNX Software article](https://cnx-software.com/2024/04/02/avaota-a1-open-source-hardware-sbc-allwinner-t527-octa-core-cortex-a55-soc), [linux-sunxi JTAG](https://linux-sunxi.org/JTAG), [linux-sunxi microSD breakout](https://linux-sunxi.org/MicroSD_Breakout)
