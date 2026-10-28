@@ -1,0 +1,46 @@
+--- a/services/system/rogue/rgx_sunxi/sunxi_platform.c	2026-10-28 15:59:29.135996358 +0700
++++ b/services/system/rogue/rgx_sunxi/sunxi_platform.c	2026-10-28 15:59:29.141996661 +0700
+@@ -311,6 +311,35 @@
+ 	writeReg(0x0340018c, val | 0x1);*/
+ }
+ 
++/*
++ * Ported from Orange Pi / Allwinner AIoT v1.5.0 Linux DDK (24.2@6603887),
++ * rgx_sunxi/sunxi_platform.c: sunxi_secure_config(). That driver calls it
++ * before every RGXStart() through pfnTDSystemSecureConfig, a hook this older
++ * Android core does not have. It releases the GPU "DRM" (secure) reset in the
++ * SMC and clears GPU_GLB.DRM_CTRL so the firmware can boot in non-secure mode
++ * with the boot firmware Orange Pi ships. Called here right after clocks and
++ * power-domain are up, i.e. before RGXStart() of the same power-on.
++ */
++#define SMC_BASE_ADDR        0x0a000000
++#define SMC_DRM_GPU_HW_RST   0xb0
++#define GPU_GLB_ADDR         0x01880000
++#define GPU_DRM_CTRL         0x14
++static void sunxi_secure_config(void)
++{
++	void __iomem *ioaddr;
++
++	ioaddr = ioremap(SMC_BASE_ADDR + SMC_DRM_GPU_HW_RST, 4);
++	if (ioaddr) {
++		writel(0x2, ioaddr);
++		iounmap(ioaddr);
++	}
++	ioaddr = ioremap(GPU_GLB_ADDR + GPU_DRM_CTRL, 4);
++	if (ioaddr) {
++		writel(0x0, ioaddr);
++		iounmap(ioaddr);
++	}
++}
++
+ PVRSRV_ERROR sunxiPrePowerState(IMG_HANDLE hSysData,
+ 				PVRSRV_SYS_POWER_STATE eNewPowerState,
+ 				PVRSRV_SYS_POWER_STATE eCurrentPowerState,
+@@ -349,6 +378,7 @@
+ #if defined(USE_FPGA)
+ 		sunxi_ppu_enable_gpu();
+ #endif
++		sunxi_secure_config();
+ 	}
+ 	mutex_unlock(&platform->power_lock);
+ 

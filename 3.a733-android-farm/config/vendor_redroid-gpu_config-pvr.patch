@@ -1,0 +1,37 @@
+--- a/gpu_config.sh
++++ b/gpu_config.sh
+@@ -94,11 +94,34 @@
+     setprop ro.hardware.vulkan pastel
+ }
+ 
++# PowerVR (A733 BXM-4-64, vendor DDK): host runs pvrsrvkm, DRM driver name "pvr"
++setup_pvr() {
++    for n in /sys/kernel/debug/dri/*/name; do
++        [ -f "$n" ] || continue
++        if [ "$(cut -d' ' -f1 "$n")" = "pvr" ]; then
++            echo "PowerVR (pvrsrvkm) found -> IMG blobs"
++            chmod 666 /dev/dri/card* /dev/dri/renderD* 2>/dev/null
++            [ -e /dev/pvr_sync ] && chmod 666 /dev/pvr_sync
++            setprop ro.hardware.egl POWERVR_ROGUE
++            setprop ro.hardware.vulkan powervr
++            setprop ro.hardware.gralloc powervr
++            setprop ro.boot.redroid_fps 30
++            # starts the (disabled) IMG allocator@4.0 service, see redroid-pvr.rc
++            setprop vendor.redroid.pvr 1
++            return 0
++        fi
++    done
++    return 1
++}
++
+ gpu_setup() {
+     ## mode=(auto, host, guest)
+     ## node=(/dev/dri/renderDxxx)
+ 
+     mode=$(getprop ro.boot.redroid_gpu_mode guest)
++    if [ "$mode" = "host" ] || [ "$mode" = "auto" ]; then
++        setup_pvr && return 0
++    fi
+     if [ "$mode" = "host" ]; then
+         setup_render_node
+         gpu_setup_host

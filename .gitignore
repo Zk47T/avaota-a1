@@ -1,2 +1,7 @@
 # Windows download markers
 *:Zone.Identifier
+
+# A733 Android farm: sources are re-fetched by scripts/00-fetch-sources.sh,
+# build outputs contain vendor GPU blobs (do not publish)
+3.a733-android-farm/src/
+3.a733-android-farm/out/

@@ -8,7 +8,7 @@ Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer seven 
 4. How do the Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro compare for DDR work, and does i.MX95 PHY-firmware reverse engineering carry over to the i.MX93? (Sections 2.16 and 2.17)
 5. What can you learn about DRAM with T113-S3, RZ/V2L SMARC, Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro together? (Section 2.18)
 6. Which parts of this actually pay off for an embedded Linux BSP job target? (Section 2.19)
-7. What does the Avaota-A1 add over your T113-S3 board, and can the T527 do instruction trace like the i.MX95? (Section 3)
+7. What does the Avaota-A1 add over your T113-S3 board, can the T527 do instruction trace like the i.MX95, how does the Orange Pi 4A (same T527) compare, what about the Orange Pi Zero 4 and Zero 3W (A733), and does JTAG work on the A733? (Section 3)
 
 Everything here was checked on 2026-10-22 against the files in this repo (schematic v1.7, BOM v1.7, the Allwinner manuals) and against upstream source code (xfel, SyterKit, U-Boot and OpenOCD). Nothing has been tried on a real board yet. Steps that depend on hardware behaviour are marked **(untested)**.
 
@@ -31,6 +31,7 @@ Repo layout:
 
 - [1.hardware/Avaota-A1](1.hardware/Avaota-A1): YuzukiHD open hardware. Contains schematics v1.2–v1.7, BOM, Gerbers, Altium/EasyEDA projects, LPDDR4 layout templates (`resource/dram_4l`, `resource/dram_8l`) and IBIS models.
 - [2.docs/docs](2.docs/docs): Allwinner documentation: A523/A527/T527/A733/T736 manuals, hardware design guides and SDK guides.
+- [3.a733-android-farm](3.a733-android-farm/README.md): side project. Runs redroid (Android in Docker) on A733 boards (Orange Pi Zero 3W / Zero 4) with the PowerVR GPU. It has build scripts for the binder-enabled host kernel and for the Android-flavour GPU driver, plus static checks of the driver/blob pairing. Its sources and build outputs are re-fetched or rebuilt by its scripts and are not committed.
 
 ---
 
@@ -1001,6 +1002,8 @@ If you want one depth piece, time-box it to 2–3 weeks: the RZ/V2L Vref trainin
 - The manual documents **no trace sink**: no ETF/ETB, no ETR, no TPIU, no funnel or ROM-table addresses.
 - Mainline has no CoreSight nodes for the A523 family.
 - Without an on-chip sink, the ETM is useless on this board, because there is no trace port on the pins either.
+- **In short: "documented ETM" means only "the A55 cores were built with their ETM option".** The i.MX95 RM documents the *whole path*: per-core ETM at +0x30000, funnels, ETF 16 KB at `0x41030000`, ETR at `0x41040000` into DRAM, and no TPIU. That path is what made your capture work. On the T527 only the first box is on paper. The A733 manual does not even mention ETM.
+- **What works without any sink:** JTAG halt/step/watchpoints, and **PC sampling through the PMU (PMPCSR)**. That is your `ocd.sh top` method from the i.MX95, and it needs only the debug APB. It should carry over to the A55 cores of the T527 and A733 `[?]`.
 
 **How to find out** (the method you used on the i.MX95):
 
@@ -1048,6 +1051,232 @@ If instruction trace is what you want at this price, **the FRDM-IMX93 you alread
 - **Small and cheap:** in-package DRAM, USB-C power, a ~$11 chip. It is the right base for a sold learning board (elb1); the Avaota is the step up.
 - **Proven tooling:** the T113 has JTAG, OpenOCD target, `jtag-fel.sh`, measured numbers and 80+ field docs. The Avaota starts from zero, apart from section 1.
 
+### 3.7 Orange Pi 4A: the same T527, a different board
+
+**Sources:** mainline Linux `sun55i-t527-orangepi-4a.dts` and U-Boot `configs/orangepi_4a_defconfig` (master, read 2026-10-28); the CNX Software spec list; the out-of-tree `ut-slayer/orangepi-4a-mainline` project. `[?]` = not checked on hardware.
+
+**Board hardware:**
+
+| | Avaota-A1 | Orange Pi 4A |
+|---|---|---|
+| Price | $54.95, 4 GB + 32 GB eMMC included | launch price **$35 (2 GB) / $40 (4 GB)**; the eMMC is an optional module |
+| RAM | 4 GB LPDDR4 (VCC-DRAM 1.16 V) | 2 or 4 GB LPDDR4/4X (VCC-DRAM 1.16 V in the mainline DT) |
+| Storage | 32 GB eMMC, SPI **NAND**, microSD | eMMC **socket** (16–128 GB modules), SPI **NOR** 128 Mbit, microSD, **M.2 M-key NVMe** |
+| The USB3/PCIe lane | **USB 3.0** port | **PCIe 2.0 x1 → M.2 NVMe**; all 4 USB-A ports are USB 2.0 |
+| Ethernet | **2× GbE** (RTL8211F) | 1× GbE (YT8531, GMAC1) |
+| Wi-Fi/BT | AIC8800D: **no mainline driver** | **AP6256** (brcmfmac + BCM4345C5): **mainline drivers exist and are in the DT** |
+| Display / camera | HDMI, DP, LVDS/DSI connector, RGB FPC, SPI TFT; 4-lane CSI | HDMI 2.0, 4-lane DSI, eDP; 4-lane + 2-lane CSI |
+| CAN | TJA1051T fitted | not listed |
+| Power, size | 12 V barrel; larger board | **5 V/5 A USB-C**; **89 × 56 mm**, Pi layout and 40-pin header |
+| Buttons, debug | FEL, reset, power; UART on the header and USB-C SBU | Boot, reset, power; 3-pin debug UART |
+| microSD JTAG | PF0–PF5 (SDC0) | **the same pins**: `mmc0` = PF0–PF5, card detect on PF6, so your sniffer + CH347F fit `[?]` |
+| Design files | **open hardware**: schematic, PCB (Altium/EasyEDA), Gerbers, BOM, LPDDR4 layout templates, IBIS | a schematic PDF from Orange Pi; no layout files `[?]` |
+
+**Software:**
+
+| | Avaota-A1 | Orange Pi 4A |
+|---|---|---|
+| Mainline Linux, board DT | UART, MMC, SPI NAND, USB 2.0, **2× GbE**, GPU, LEDs, IR | UART, MMC, SPI NOR, USB 2.0, 1× GbE, GPU, **Wi-Fi + BT** |
+| Mainline U-Boot | `avaota-a1_defconfig` (2025-07) | `orangepi_4a_defconfig` (2025-10, by the sunxi maintainer Chen-Yu Tsai) |
+| Out-of-tree mainline work | — | `orangepi-4a-mainline` on 6.18.55: **HDMI KMS, PCIe NVMe (2 testers), Panfrost devfreq, VPU decode, audio** |
+
+**What this means for your three goals:**
+
+- **DDR training: about equal, and better if you own both.** Both use the same open SPL DRAM driver with the same `TPR10 = 0x802f3333`. The board-specific delays differ:
+
+  | | Avaota-A1 | Orange Pi 4A |
+  |---|---|---|
+  | `TPR11` (write DQ) | `0xc7c5c4c2` | `0xc6c4c2c0` |
+  | `TPR12` (read DQ) | `0x3533302f` | `0x3a373233` |
+  | `TPR2` | default | `0x5f090503` |
+
+  Same SoC and same driver, but two layouts give two sets of delays, which makes a clean experiment. Only the Avaota has the open PCB, DRAM templates and IBIS models to explain *why*.
+- **BSP and upstream: the Orange Pi 4A.**
+  - It is cheaper and easy for you to buy, Pi-sized and USB-C powered.
+  - Its Wi-Fi works with mainline drivers.
+  - It has PCIe/NVMe hardware, and the A523 PCIe controller is not upstream yet.
+  - The sunxi maintainer runs it himself, so patches get tested.
+  - An out-of-tree tree already has HDMI, PCIe, VPU and audio working, which is a reference for upstreaming, if you coordinate with its author.
+- **Trace and JTAG: the same.** It is the same silicon (3.4) and the same microSD pins.
+
+**Recommendation:**
+
+- **If you buy one T527 board for BSP work, take the Orange Pi 4A 4 GB.**
+- **Add the Avaota-A1 later**, or now if DDR/SI is the focus, for its open hardware files, 2× GbE, USB3 and CAN.
+- **With both,** you get the same-SoC DRAM comparison above for about $95.
+
+**Does the Avaota-A1 still teach anything the Orange Pi 4A doesn't?** Only a little, and you already have most of it:
+
+- **Its open design files:** schematic, PCB, LPDDR4 layout templates, IBIS. These are useful for your own board design and for DDR/SI. They are **already in this repo** (`1.hardware/Avaota-A1`), so you get that lesson without buying the board.
+- **2× GbE, USB 3.0, and a CAN transceiver fitted.** Buy the Avaota only if you want those on the bench.
+
+### 3.8 Orange Pi Zero 4: a different chip, the Allwinner A733
+
+**Sources:**
+
+- CNX Software and LinuxGizmos, 2026-08-31;
+- the A733 datasheet V1.01 in `2.docs/docs/A733`;
+- the mainline Linux and U-Boot trees, read 2026-10-28;
+- SyterKit `soc/sun60iw2/lib/libdram-lpddr{4,5}.a`, inspected with `readelf`.
+
+**The chip and the board:**
+
+| | Orange Pi 4A (T527) | Orange Pi Zero 4 (A733) |
+|---|---|---|
+| CPU | 8× A55 up to 1.8 GHz | **2× A76 + 6× A55**, up to 2.0 GHz |
+| GPU / NPU | Mali-G57 MC1 (Panfrost) / 2 TOPS | **IMG PowerVR BXM-4-64** (not Mali) / 3 TOPS |
+| Small cores | E906 RISC-V + HiFi4 DSP | E902 RISC-V |
+| DRAM | LPDDR4/4X, 2/4 GB | **32-bit LPDDR4 / LPDDR4X / LPDDR5**, up to 16 GB, depending on the variant |
+| Storage | eMMC socket, SPI NOR, microSD, M.2 NVMe | eMMC **or UFS 3.0** (by variant), microSD |
+| I/O | HDMI 2.0, 1× GbE, Wi-Fi 5, 4× USB 2.0, M.2 PCIe 2.0 | mini-HDMI, **USB-C DP**, GbE, **Wi-Fi 6 / BT 5.4**, 2× MIPI CSI, **PCIe FFC** (Pi-5 style; SoC has PCIe 3.0) |
+| Size, price | 89 × 56 mm; $35 / $40 at launch | **55 × 50 mm; from $26.5** (the lowest RAM); one reader saw 4 GB at ~$52 |
+
+**Mainline status:**
+
+| | Orange Pi 4A (T527) | Orange Pi Zero 4 (A733) |
+|---|---|---|
+| Linux | board DT, GPU, GbE, Wi-Fi; out-of-tree HDMI/PCIe | **foundations landing in 2026** (3.9); **no SoC or board DT yet** |
+| U-Boot | `orangepi_4a_defconfig`, open SPL DRAM init | **no A733 support** |
+
+**The DDR surprise, which matters for your i.MX95 work.** The A733's `libdram` is a **Synopsys DWC DDR PHY** driver, the same model as NXP:
+
+- **It is unstripped.** It has 52 named functions: `dwc_ddrphy_phyinit_D_loadIMEM`, `dwc_ddrphy_phyinit_F_loadDMEM`, `dwc_ddrphy_phyinit_G_execFW`, `lpddr5_phyinit_I_loadPIEImage`, `ddrphy_phyinit_C_initPhyConfigPsLoop`, `dwc_ddrphy_phyinit_progCsrSkipTrainPsLoop`, `save_phy_2d_training_result`.
+- **It embeds the PMU training firmware** as named data objects:
+  - `imem_lpddr5`: **64,160 bytes**
+  - `imem_lpddr4`: 51,672 bytes
+  - `dmem_lpddr5`, and PIE images `pie1…4_lpddr5`
+- **It looks like the i.MX95's PHY generation, not the i.MX93's.** The i.MX95 OEI has the same PState-loop and `prog_csr` structure and the same 64 KB IMEM window (2.17). Likely, but not proven.
+- **Your i.MX95 PMU reverse engineering may transfer more directly here than to the i.MX93.**
+  - **Check it on the other PC:** extract `imem_lpddr5` from the `.o` (its symbol gives the offset in `.data`) and compare it with NXP's `lpddr5_imem_v202409.bin`.
+  - Same firmware family means your function map applies. Byte-identical means it is the same release.
+- **Unlike NXP, even the host-side code (load, run, read results) is a closed blob here.** An open A733 DRAM init does not exist anywhere, which makes it a real upstream gap.
+- The T527 `libdram` has only `ddrphy_phyinit_C_initPhyConfig` and none of the `dwc_ddrphy_*` functions or firmware images. Allwinner borrowed the PhyInit *naming* there, around its own PHY (2.12).
+
+**Verdict for your goals:**
+
+| Goal | Best board | Why |
+|---|---|---|
+| BSP and upstream, now | **Orange Pi 4A** | mainline base exists; clear gaps to fill (PCIe, display, thermal, cpufreq) |
+| DDR and your i.MX95 PMU work | **Orange Pi Zero 4** | Synopsys PMU firmware in an unstripped blob, LPDDR5 possible, FEL |
+
+The cost of the Zero 4 is a vendor-BSP-only platform for a long time. Pick its **LPDDR5 variant** if you buy it for DDR. The A733 also has the newest cores (A76 + A55).
+
+**Avaota-A1:** use its design files from this repo. Buy it only for 2× GbE, USB3 or CAN.
+
+### 3.9 A733 vs T527 in detail; JTAG, eMMC and UFS on the Orange Pi Zero 4
+
+**Sources:**
+
+- A733 datasheet V1.01 and user manual V1.00, and T527 datasheet V0.95 / user manual V0.94, all in `2.docs`;
+- xfel `chips/a733.c`;
+- mainline Linux commits (read 2026-10-28);
+- the CNX Software board article.
+
+**The chips:**
+
+| | T527 (Avaota-A1, Orange Pi 4A) | A733 (Orange Pi Zero 4) |
+|---|---|---|
+| CPU | 8× A55, 1.8 / 1.42 GHz clusters | **2× A76 @ 2.0 GHz + 6× A55 @ 1.79 GHz** |
+| CPU subsystem | DynamIQ DSU, GIC-600, CoreSight-600; UM says each core has an **ETM** | DynamIQ DSU (L3, RAS, ECC options), GIC-600, CoreSight-600; **the UM does not mention ETM** |
+| GPU | Mali-G57 MC1 (Panfrost in mainline) | **Imagination BXM-4-64 MC1** (GLES 3.2, Vulkan 1.3); a different driver stack |
+| NPU / DSP / MCU | 2 TOPS / **HiFi4** / E906 RV32 | **3 TOPS** / **no DSP** / E902 |
+| DRAM | 32-bit DDR3/DDR4/LPDDR3/LPDDR4/4X, **≤ 4 GB**; Allwinner PHY + CPU soft training | 32-bit **LPDDR4/4X/LPDDR5, ≤ 16 GB**; **Synopsys PHY + PMU firmware** (3.8) |
+| Storage | eMMC 5.1, SD 3.0, SPI NOR/NAND | eMMC 5.1, SD 3.0, **UFS 3.0** (Synopsys UFS + UniPro 1.8 + M-PHY 4.1, HS-G4, inline AES-XTS), raw NAND, octal SPI |
+| High-speed | USB 3.1 / **PCIe 2.1** combo | USB 3.1 **Gen2** combo with **eDP 1.4b/DP 1.4 or PCIe 3.0** |
+| Ethernet | **2× GMAC** | 1× GMAC |
+| Display | HDMI 2.0, eDP 1.3, 4+4 DSI, 2× dual LVDS, 2× RGB | HDMI 2.0b, eDP 1.4b/DP 1.4, 2× 4-lane DSI (DSC), LVDS, RGB, E-ink |
+| Camera / video | MIPI CSI 4+4 + ISP; 4K60 decode, 4K25 encode | **3× MIPI CSI (4+4+2), ISP 8M@60**; **8K24** H.265/VP9/AVS2 decode, **4K30 H.265/H.264 encode** |
+| GPIO layout | `PF_CFG0` at `0x020000F0` | **new layout**: `PF_CFG0` at **`0x02000300`** (GPIO block 8 KB) |
+| Mainline | SoC + boards since 6.15 | **foundations only, 2026:** pinctrl (Andre Przywara), MMC/SPI/I2C/NMI bindings and RTC clock (Jerome Brunet), PCK600 power domains (Yuanshen Cao); **no SoC DT yet**, no U-Boot |
+| FEL tools | xfel read/write | xfel read/write (chip ID `0x00190300`); `jtag` and `ddr` are **stubs** |
+
+**Does the A733 "crush" the T527?**
+
+- **Hardware and DDR: yes.** It has faster cores, LPDDR5, UFS, PCIe 3.0 and the Synopsys PHY.
+- **Mainline today: no.** Upstreaming has only started, but it is real and active, by Arm and BayLibre people. So:
+  - **(+)** It is a fresh SoC with serious maintainers. Board DT, MMC/eMMC, UFS glue and an open DRAM init will all be needed.
+  - **(−)** For a while you work on the vendor kernel, and your patches depend on others landing the SoC basics first. Check lore before starting anything.
+  - The CNX article's "nothing has happened" is out of date.
+
+**JTAG on the A733: yes, with one difference.**
+
+- **The SD-card mapping is the same as on the T527:**
+
+  | microSD contact | A733 pin | Function 3 |
+  |---|---|---|
+  | DAT1 | PF0 | JTAG-MS (TMS) |
+  | CMD | PF1 | JTAG-DO (TDO) |
+  | DAT0 | PF3 | JTAG-DI (TDI) |
+  | DAT2 | PF5 | JTAG-CK (TCK) |
+  | CLK / DAT3 | PF2 / PF4 | UART0 TX / RX |
+
+  The GPIO numbers for CMD and DAT0 are swapped compared with the T527 (where PF1 = DAT0 and PF3 = CMD), but the **same sniffer wiring and CH347F** work.
+- **The register moved.** In FEL, first check `xfel read32 0x02000300`; the boot ROM may already mux JTAG. Otherwise run `xfel write32 0x02000300 0x0f3f3f33`. Do **not** reuse the T527 address `0x020000F0`.
+- **The PB route exists too** (PB0–PB3, function 7 per the pin table `[?]`), plus `JTAG-SEL` on ball W2. S-JTAG is on PL4–PL7 / PM0–PM2.
+- **Unverified on the Zero 4:**
+  - that its microSD is wired to SDC0 (normal for Allwinner);
+  - how FEL is entered (the board has "BOOT" through-holes, no button);
+  - the DAP type (CoreSight-600: try `-adiv6` if ADIv5 fails);
+  - whether any trace sink exists.
+
+**eMMC and UFS: good teaching, in two very different sizes.**
+
+- **eMMC:** the A733 MMC compatible strings are already in mainline (2026-08). Board-level eMMC bring-up (DT, HS200/HS400 tuning, boot partitions) is near-term, normal BSP work, and every product needs it.
+- **UFS:** the A733 UFSHC is Synopsys UFS 3.0 + UniPro 1.8 + M-PHY 4.1 with inline encryption. Linux has the UFS core and DesignWare helpers, but **no Allwinner glue driver**. That makes it a real driver project (clocks, resets, M-PHY setup, inline crypto). It is rarer in industrial products than eMMC, but growing (automotive, high-end).
+- **The boot ROM boots UFS too.** The A733 UM boot order ends `… SPI_NOR → SPI_NAND → UFS`, so it is also a boot-chain lesson.
+- **Empty footprints mean BGA soldering** (153-ball class parts, fine pitch), the same skill problem as the DRAM swap (2.8). If you want to *learn the bring-up* rather than the soldering, buy a variant with eMMC or UFS fitted, or check whether the "UFS module footprint" is a plug-in socket.
+
+**Moving the RAM from the FRDM-IMX95 to the Zero 4: don't.**
+
+- It means desoldering LPDDR5 from a ~$300 board.
+- The package and rank setup would have to match, which is unverified.
+- Training results belong to a *board* (its layout), not to a chip, so moving the chip moves nothing you can reuse.
+
+**What carries over is the firmware knowledge.** So start on the A733 board, which is cheap and FEL-recoverable:
+
+1. Extract `imem_lpddr5` from `libdram` and compare it with your i.MX95 work.
+2. Run training on both boards and compare their message blocks and trained CSRs.
+3. On the A733, the *host* side runs in boot0 on the CPU, so JTAG can catch it there, like SPL on the i.MX93 (2.12).
+
+### 3.10 Orange Pi Zero 3W vs Zero 4 (both A733) for RAM, eMMC and UFS rework
+
+**Sources:** CNX Software (Zero 3W 2026-04-15, Zero 4 2026-08-31), the thinkdifferent.blog Zero 3W review, Amazon/Newegg listings. Neither board's schematic was checked. `[?]` = from articles only.
+
+**The boards:**
+
+| | Orange Pi Zero 3W | Orange Pi Zero 4 |
+|---|---|---|
+| Size | **65 × 32 × 1.2 mm** (Pi Zero size) | 55 × 50 mm |
+| RAM | **LPDDR5 on every variant**, 4800 MT/s; 1/2/4/8/12/16 GB | LPDDR4 / 4X / **or** LPDDR5, depending on the variant (not stated which) |
+| eMMC | footprint, **unpopulated by default** | footprint (8/16/32 GB options) |
+| UFS 3.0 (2-lane) | footprint, **unpopulated by default** | "UFS 3.0 module footprint" (32/64/128 GB options) |
+| Footprint side | the review's photo caption puts the eMMC and UFS footprints on the **underside** `[?]` | not described |
+| Ethernet | **none** | GbE (YT8531C) |
+| Other I/O | mini-HDMI, USB-C 3.1 OTG + DP, 4-lane DSI, 2× 4-lane CSI, PCIe 3.0 x1 FPC, Wi-Fi 6/BT 5.4, 40-pin header | mini-HDMI, USB-C 3.1 + DP, 2× 4-lane CSI, PCIe 3.0 x1 FFC, Wi-Fi 6/BT 5.4, 26 + 13-pin headers |
+| FEL | "BOOT" through-holes | "BOOT" through-holes |
+| Price (launch) | **$25** (1 GB), $35 (2 GB), $50 (4 GB), $60 (6 GB), $80 (8 GB), $99.90 (12 GB) | $26.5 (1 GB), $37 (2 GB), $52 (4 GB), $63 (6 GB), $83 (8 GB) |
+
+**Which one for rework:**
+
+| Rework | Better board | Why |
+|---|---|---|
+| **RAM swap** | **Zero 3W** | Every variant uses LPDDR5 on the same PCB. You know the memory type, and the footprint already takes 1–16 GB parts. A $25 1 GB board can become a density-upgrade exercise: training plus size detection on the same layout. On the Zero 4 the memory type changes with the variant, so you would first have to find out what your footprint is. |
+| **eMMC soldering** | **Zero 3W** (Zero 4 also fine) | Both have the footprint. The 3W's are unpopulated by default and reportedly on the underside, away from the SoC and RAM. |
+| **UFS soldering** | **Zero 3W** | A clear "footprint for an optional 2-lane UFS 3.0 module", unpopulated. The Zero 4's wording ("module footprint") still needs checking. |
+| Daily BSP development | **Zero 4** | Its Gigabit Ethernet makes TFTP/NFS-root loops easy. The 3W needs USB gadget Ethernet or Wi-Fi. |
+
+**Caveats for the 3W:**
+
+- A tiny, thin board (1.2 mm) heats up fast. That is good for rework, but it **needs a bottom preheater and a holder**, and fine-pitch parts sit close together.
+- Check the real footprints (and whether the UFS footprint is BGA) on Orange Pi's schematic or photos before ordering parts.
+
+**Suggested set:**
+
+- **two Zero 3W boards**, a **1 GB ($25) for rework practice** and a 4 GB or 8 GB for daily work;
+- optionally a Zero 4 later, for Ethernet.
+
+**Two 3W boards on the same PCB with different LPDDR5 densities also isolate the *chip* effect on training.** The Avaota-vs-Orange-Pi-4A pair (3.7) isolates the *layout* effect.
+
 ---
 
 ## 4. Sources
@@ -1075,6 +1304,10 @@ Upstream:
 - ST: [STM32MP135F-DK](https://www.st.com/en/evaluation-tools/stm32mp135f-dk.html), [RS Italy price](https://it.rs-online.com/web/p/strumenti-di-sviluppo-per-microcontrollori/2615098), [U-Boot SPL DDR interactive mode](https://wiki.st.com/stm32mpu-ecosystem-v3/wiki/U-Boot_SPL:_DDR_interactive_mode), [DDRCTRL/DDRPHYC DT configuration](https://wiki.st.com/stm32mpu/wiki/DDRCTRL_and_DDRPHYC_device_tree_configuration)
 - Jobs: [AMD Memory PHY FW (Austin)](https://www.jobleads.com/us/job/memory-phy-firmware-engineer-ddr-lpddr--austin--eca55330dc134d678816ab0f2c8394cc3), [AMD DDR/LPDDR FW (Bengaluru)](https://www.electronicsforu.com/career/firmware-engineer-ddr-lpddr-amd-bengaluru), [Intel DDR PHY FW](https://intel.wd1.myworkdayjobs.com/External/job/Mexico-Guadalajara/DDR-PHY-Firmware-Engineer_JR0285805), [Cadence principal FW](https://cadence.wd1.myworkdayjobs.com/en-US/External_Careers/job/Principal-Firmware-Engineer_R53293), [Astera Labs DDR FW lead](https://theorg.com/org/astera-labs/jobs/tech-lead-firmware-engine-89478810), [Qualcomm DDR PHY system design](https://bebee.com/us/jobs/ddr-phy-system-design-engineer-san-diego-us-qualcomm-san-diego-ca--t7xk-793302983), [ZipRecruiter DDR PHY engineer](https://www.ziprecruiter.com/Jobs/Ddr-Phy-Engineer), [memory market 2026 overview](https://intuitionlabs.ai/articles/hbm-dram-ai-memory-demand)
 - FRDM-IMX93 debug and DDR: [2.docs/jlink-imx93](2.docs/jlink-imx93) (NXP community post, saved), [FRDM-IMX93 user manual UM12181](https://mouser.com/pdfDocs/FRDM-IMX93_UM.pdf), U-Boot [ddrphy_train.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_train.c), [ddrphy_utils.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_utils.c), [imx9 ddr_init.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/imx9/ddr_init.c), [imx93_frdm board](https://github.com/u-boot/u-boot/tree/master/board/nxp/imx93_frdm), TF-A Synopsys PhyInit for STM32MP2: [CSR names](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/phyinit/include/ddrphy_csr_all_cdefines.h), [LPDDR4 message block](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/firmware/include/mnpmusrammsgblock_lpddr4.h)
+- A733 mainline and tools (3.9): [Linux commits mentioning A733](https://github.com/torvalds/linux/commits/master?author=&search=a733) (pinctrl: Andre Przywara; MMC/SPI/I2C/NMI bindings, RTC clock: Jerome Brunet; PCK600: Yuanshen Cao), xfel [chips/a733.c](https://github.com/xboot/xfel/blob/main/chips/a733.c), A733 user manual V1.00 (local: §11.2 UFSHC, GPIO `PF_CFG0` @ 0x0300, boot order)
+- Orange Pi Zero 3W (3.10): [CNX Software](https://www.cnx-software.com/2026/04/15/orange-pi-zero-3w-an-allwinner-a733-sbc-in-raspberry-pi-zero-form-factor/), [thinkdifferent.blog review](https://www.thinkdifferent.blog/blog/orange-pi-zero-3w-review/), [Liliputing](https://liliputing.com/?p=199280), [Newegg 4 GB listing](https://www.newegg.com/p/3D0-0067-00036)
+- Orange Pi Zero 4 / A733 (3.8): [CNX Software](https://www.cnx-software.com/2026/08/31/orange-pi-zero-4-allwinner-a733-sbc-offers-hdmi-usb-c-dp-gbe-wifi-6-pcie-ffc-connector/), [LinuxGizmos](https://linuxgizmos.com/orange-pi-zero-4-with-octa-core-a733-wi-fi-6-and-gigabit-ethernet/), A733 datasheet V1.01 (local, `2.docs/docs/A733`), SyterKit [sun60iw2 libdram](https://github.com/YuzukiHD/SyterKit/tree/main/soc/sun60iw2/lib) and [dram-sun60iw2.c](https://github.com/YuzukiHD/SyterKit/blob/main/drivers/dram/dram-sun60iw2.c), mainline Linux commits for `sun60i` (RTC clock, pmdomain, 2026)
+- Orange Pi 4A (3.7): mainline [sun55i-t527-orangepi-4a.dts](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/allwinner/sun55i-t527-orangepi-4a.dts), U-Boot [orangepi_4a_defconfig](https://github.com/u-boot/u-boot/blob/master/configs/orangepi_4a_defconfig) and [its patch](https://lists.denx.de/pipermail/u-boot/2025-October/601491.html), [Linux board series](https://patchew.org/linux/20250628161608.3072968-1-wens@kernel.org), [CNX spec list](https://cnx-software.com/2024/11/16/orange-pi-4a-low-cost-octa-core-sbc-is-powered-by-allwinner-t527-cortex-a55-ai-soc-with-a-2tops-npu), [orangepi-4a-mainline (out of tree)](https://github.com/ut-slayer/orangepi-4a-mainline), [electronics-lab review](https://electronics-lab.com/orange-pi-4a-sbc-powered-by-allwinner-t527-with-mali-g57-gpu-and-2-tops-npu), [linux-sunxi page](https://linux-sunxi.org/Xunlong_Orange_Pi_4A)
 - Avaota vs T113 (section 3): mainline [sun55i-a523.dtsi](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/allwinner/sun55i-a523.dtsi), [sun55i-t527-avaota-a1.dts](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts) and [its history](https://github.com/torvalds/linux/commits/master/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts); TF-A [plat/allwinner](https://github.com/ARM-software/arm-trusted-firmware/tree/master/plat/allwinner); U-Boot [sunxi.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/allwinner/sunxi.rst); [A523 thermal series (2025)](https://lkml.iu.edu/hypermail/linux/kernel/2504.1/08971.html), [A523 NPU node](https://lists.infradead.org/pipermail/linux-arm-kernel/2025-September/1061789.html), [A523 Mali enable](https://lists.infradead.org/pipermail/linux-arm-kernel/2025-July/1042811.html), [Orange Pi 4A out-of-tree mainline port](https://github.com/ut-slayer/orangepi-4a-mainline); T527 datasheet V0.95 / user manual V0.94 (§2.2 CPUX, CoreSight, timestamp) in `2.docs`; schematic v1.7 sheets 1, 8, 10–13 and BOM v1.7; T113 side from `~/1.project/elb1/8.new3-repo/elb1-t113/README.md`, field docs 07, 80 and `4.docs/reports/Embedded Linux industry requirements.md`
 - T113-S3 and RZ/V2L: U-Boot [dram_sun20i_d1.c](https://github.com/u-boot/u-boot/blob/master/drivers/ram/sunxi/dram_sun20i_d1.c), [mangopi_mq_r_defconfig](https://github.com/u-boot/u-boot/blob/master/configs/mangopi_mq_r_defconfig), [awboot](https://github.com/szemzoa/awboot); Renesas TF-A [plat/renesas/rz/common/drivers/ddr/ddr.c](https://github.com/renesas-rz/rzg_trusted-firmware-a/blob/v2.3/rzg2l/plat/renesas/rz/common/drivers/ddr/ddr.c), [RZ/V2L DDR params](https://github.com/renesas-rz/rzg_trusted-firmware-a/tree/v2.3/rzg2l/plat/renesas/rz/soc/v2l/drivers/ddr), [RZ/V2L product page](https://www.renesas.com/us/en/products/microcontrollers-microprocessors/rz-mpus/rzv2l-general-purpose-microprocessor-equipped-renesas-original-ai-dedicated-accelerator-drp-ai-12ghz-dual), [SolidRun RZ/G2L·V2L SOM manual](https://solidrun.atlassian.net/wiki/spaces/developer/pages/511148033/RZ+G2L+and+RZ+V2L+SOM+Hardware+User+Manual), [Zephyr RZ/V2L SMARC (boot switches)](https://docs.zephyrproject.org/latest/boards/renesas/rzv2l_smarc/doc/index.html), [SMARC EVK RZ/V2L Linux start guide](https://www.renesas.com/en/document/gde/smarc-evk-rzv2l-linux-start-guide-rev104), OpenOCD [renesas_rz.cfg](https://github.com/openocd-org/openocd/blob/master/tcl/target/renesas_rz.cfg)
 - i.MX93 vs i.MX95 DDR internals: U-Boot [imx93-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx93-u-boot.dtsi), [imx95-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx95-u-boot.dtsi), [imx95_evk.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/nxp/imx95_evk.rst), [arch-imx9/ddr.h](https://github.com/u-boot/u-boot/blob/master/arch/arm/include/asm/arch-imx9/ddr.h); imx-oei [oei/ddr](https://github.com/nxp-imx/imx-oei/tree/master/oei/ddr) (`ddrphy_train.c`, `ddrphy_utils.c`, `helper.c`, `ddr.h`, `msb_ddr4x.h`, `msb_ddr5.h`, `ddrphy_qb.c`), [mx95lp5 timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp5/ddr), [mx95lp4x timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp4x/ddr); QuickBoot: [U-Boot QuickBoot doc](https://concept-docs.readthedocs.io/en/latest/board/nxp/quickboot.html), [U-Boot patch series](https://lists.denx.de/pipermail/u-boot/2026-May/620233.html), [NXP community: i.MX95 DDR QuickBoot](https://community.nxp.com/t5/i-MX-Processors/i-MX95-DDR-Quick-Boot-Questions-on-Optimal-Training-Conditions/m-p/2179922); i.MX95 RM ch. 114 (local, `~/praxis/imx/rm`)
