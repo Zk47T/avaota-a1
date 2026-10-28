@@ -1,0 +1,16 @@
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
+@@ -1612,11 +1612,11 @@
+ 	cqe-on;
+ 	ctl-cmdq-md = <0x2>;
+ 	max-frequency = <200000000>;
+-	/*vmmc-supply = <&reg_cldo3>;*/
++	vmmc-supply = <&reg_dc1sw2>;
+ 	/*emmc io vol 3.3v*/
+ 	/*vqmmc-supply = <&reg_aldo1>;*/
+ 	/*emmc io vol 1.8v*/
+-	/*vqmmc-supply = <&reg_cldo1>;*/
++	vqmmc-supply = <&reg_cldo1>;
+ 	status = "okay";
+ };
+ 

@@ -12,13 +12,14 @@ case "${1:-}" in
 kernel)
   sudo apt-get install -y "$D"/deploy/debs/linux-image-current-sun60iw2-redroid_*.deb \
                           "$D"/deploy/debs/linux-dtb-current-sun60iw2-redroid_*.deb
-  echo "Installed. /boot/uImage now holds $REL. Reboot, then run: $0 run"
+  echo "Installed. /boot/uImage now holds $REL (it replaces the stock uImage). Reboot, then run: $0 run"
   echo "Rollback: sudo apt install --reinstall linux-image-current-sun60iw2 && reboot"
   ;;
 run)
   [ "$(uname -r)" = "$REL" ] || { echo "running $(uname -r), expected $REL (did you reboot?)"; exit 1; }
+  command -v adb >/dev/null || sudo apt-get install -y adb
   echo "== 1. kernel features for redroid"
-  for f in binder binderfs; do grep -qw $f /proc/filesystems && echo "  $f: ok" || echo "  $f: MISSING"; done
+  grep -qw binder /proc/filesystems && echo "  binder (binderfs): ok" || echo "  binder: MISSING"
   [ -e /proc/pressure/memory ] && echo "  psi: ok" || echo "  psi: MISSING"
 
   echo "== 2. Android-flavour GPU driver (DDK 24.2@6643903) + matching firmware"
@@ -30,6 +31,7 @@ run)
   sudo modprobe pvrsrvkm
   sleep 1; sudo dmesg | grep -i -E "pvr|rgx|sunxi bxm" | tail -15
   ls -l /dev/dri/ /dev/pvr_sync 2>/dev/null || true
+  mountpoint -q /sys/kernel/debug || sudo mount -t debugfs none /sys/kernel/debug
   for n in /sys/kernel/debug/dri/*/name; do echo "  $n: $(sudo cat "$n")"; done
 
   echo "== 3. docker + image"

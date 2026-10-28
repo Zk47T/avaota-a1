@@ -295,14 +295,16 @@ Why route B is worth it:
 ## 9. On the A733 board
 
 1. Flash Orange Pi Debian **bookworm "current" (6.6)**.
-2. `rsync -a out/deploy out/redroid-pvr scripts/40-board-setup.sh scripts/45-usb-net.sh orangepi@<ip>:~/farm/`, plus `redroid-pvr-13-arm64.tar` if you built one.
+2. `rsync -a out/deploy out/redroid-pvr scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/`, plus `redroid-pvr-13-arm64.tar` if you built one.
 3. On the board:
    ```bash
-   ./40-board-setup.sh kernel && sudo reboot    # installs next to the stock kernel
+   ./40-board-setup.sh kernel && sudo reboot    # replaces /boot/uImage (the stock one comes back with the rollback below)
    ./40-board-setup.sh run                      # GPU driver + firmware, image, 2 pinned instances
+   ./50-board-report.sh                         # PASS / WARN / FAIL for section 10, evidence in ~/farm/reports/
    ```
    - Rollback: `sudo apt install --reinstall linux-image-current-sun60iw2 && sudo reboot`.
-   - Instances: CPUs `0,1,2,6` / `3,4,5,7`, `--memory=1536m`, 720×1280 at 30 fps, adb 5555/5556.
+   - Instances: CPUs `1,2,5,6` / `3,4,5,7` (host stays on cpu0), `--memory=2200m` on 6 GB (1600m under 5 GB), zram 2 GB, 720×1280 at 30 fps, adb 5555/5556.
+   - Board-day order, serial console and fallbacks: [BOARD-DAY.md](BOARD-DAY.md).
 
 ## 10. Board checklist
 

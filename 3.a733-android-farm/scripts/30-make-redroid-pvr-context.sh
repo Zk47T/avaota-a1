@@ -42,22 +42,31 @@ cat > "$C/gpu_config.sh" <<'SH'
 # ("pvr", from pvrsrvkm) and mode is host/auto, use the IMG blobs.
 # Otherwise fall back to the stock redroid logic (mesa / swiftshader).
 mode=$(getprop ro.boot.redroid_gpu_mode guest)
+pvr=""
 if [ "$mode" = "host" ] || [ "$mode" = "auto" ]; then
+  # debugfs is not mounted inside a container by default: mount it if we can
+  [ -d /sys/kernel/debug/dri ] || mount -t debugfs none /sys/kernel/debug 2>/dev/null
   for n in /sys/kernel/debug/dri/*/name; do
     [ -f "$n" ] || continue
-    drv=$(cut -d' ' -f1 "$n")
-    if [ "$drv" = "pvr" ]; then
-      echo "gpu_config: PowerVR (pvrsrvkm) found -> IMG blobs"
-      chmod 666 /dev/dri/card* /dev/dri/renderD* 2>/dev/null
-      [ -e /dev/pvr_sync ] && chmod 666 /dev/pvr_sync
-      setprop ro.hardware.egl POWERVR_ROGUE
-      setprop ro.hardware.vulkan powervr
-      setprop ro.hardware.gralloc powervr
-      setprop ro.boot.redroid_fps 30
-      setprop vendor.redroid.pvr 1     # starts IMG allocator (redroid-pvr.rc)
-      exit 0
-    fi
+    [ "$(cut -d' ' -f1 "$n")" = "pvr" ] && pvr=1
   done
+  # no debugfs view: accept the loaded module with its render and sync nodes
+  if [ -z "$pvr" ] && [ -d /sys/module/pvrsrvkm ] && [ -e /dev/pvr_sync ] \
+     && ls /dev/dri/renderD* >/dev/null 2>&1; then
+    pvr=1
+    echo "gpu_config: pvrsrvkm loaded (no debugfs name); using module + render node"
+  fi
+fi
+if [ -n "$pvr" ]; then
+  echo "gpu_config: PowerVR (pvrsrvkm) found -> IMG blobs"
+  chmod 666 /dev/dri/card* /dev/dri/renderD* 2>/dev/null
+  [ -e /dev/pvr_sync ] && chmod 666 /dev/pvr_sync
+  setprop ro.hardware.egl POWERVR_ROGUE
+  setprop ro.hardware.vulkan powervr
+  setprop ro.hardware.gralloc powervr
+  setprop ro.boot.redroid_fps 30
+  setprop vendor.redroid.pvr 1     # starts IMG allocator (redroid-pvr.rc)
+  exit 0
 fi
 echo "gpu_config: no PowerVR DRM node -> stock redroid path (IMG allocator stays off)"
 exec /vendor/bin/gpu_config.orig.sh "$@"

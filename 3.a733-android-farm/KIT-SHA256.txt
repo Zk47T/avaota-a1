@@ -1,0 +1,12 @@
+# A733 farm kit, sha256 (built 2026-10-28). Verify on the board: sha256sum -c KIT-SHA256.txt
+ae6116e35485327a244298a9a65897d261204feddaa2a1347ff05a01672598fe  out/deploy/debs/linux-dtb-current-sun60iw2-redroid_1.0-redroid_arm64.deb
+b0a9bcde11d2d11d28de75dd71b4b5c472a92f41df91ece20b0b8c2e932cdb42  out/deploy/debs/linux-headers-current-sun60iw2-redroid_1.0-redroid_arm64.deb
+6273fd078f9262d808b81c4da0fb8584ff57becfba9930d3117704227ea5db91  out/deploy/debs/linux-image-current-sun60iw2-redroid_1.0-redroid_arm64.deb
+73e4ecada5d7abe2aabd7050f640f4dd8fed97b49e6baf5794cabd4dbed8f2cd  out/deploy/lib/modules/pvrsrvkm-android.ko
+11e08779ef28306d6978f538f5f0a7dc4694b003d652689a9d3ad21bac4fd8de  out/deploy/lib/firmware/rgx.fw.36.56.104.183
+71e1b1da9b4c6b42468e378e8b835306920568088bc6669879db4a108a7747c9  out/deploy/lib/firmware/rgx.sh.36.56.104.183
+bf000e5a5fe1f7416877d8d7323abb22b39db03410ff9d1ed2cd62d418fda6f8  out/redroid-pvr-13-arm64.tar
+be7f012d2a7c24bc2cf8c4dd995365fe46fba82e1484721c59f0c65e71969b4e  out/zero3w-emmc/sun60i-a733-orangepi-zero3w-emmc.dtb
+c3638f974a95b9c8fd02bde4478d243d011c09f2aab8cd2ec94b1f7bee122906  scripts/40-board-setup.sh
+1aae9f3f760c7a8d98564f0929f06e902dd8efd0c1694094be922bd7b32517aa  scripts/45-usb-net.sh
+28ef52663828c84e4d33cbf916f2fbf99dc77b510d4a6e76e18a4e815fdff04d  scripts/50-board-report.sh

@@ -1,6 +1,6 @@
 # Avaota-A1 (Allwinner T527 / A527): JTAG and DRAM-training notes
 
-Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer seven questions:
+Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer nine questions:
 
 1. How do I enable JTAG on this chip? (Section 1)
 2. Can I use this cheap board to learn DRAM (LPDDR4) training? (Section 2)
@@ -10,10 +10,12 @@ Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer seven 
 6. Which parts of this actually pay off for an embedded Linux BSP job target? (Section 2.19)
 7. What does the Avaota-A1 add over your T113-S3 board, can the T527 do instruction trace like the i.MX95, how does the Orange Pi 4A (same T527) compare, what about the Orange Pi Zero 4 and Zero 3W (A733), and does JTAG work on the A733? (Section 3)
 8. Who is mainlining the A733 right now, what can an Orange Pi Zero 3W owner contribute (Linux, U-Boot, SyterKit), and is there Yocto support? (Section 3.11)
+9. What does the local FRDM-IMX95-PRO DRAM work show, and what is still closed? (Section 2.20)
 
 When this was checked:
 - **2026-10-22:** against the files in this repo (schematic v1.7, BOM v1.7, the Allwinner manuals) and against upstream source code (xfel, SyterKit, U-Boot and OpenOCD).
 - **2026-10-28:** the A733 parts (3.8–3.11) were updated against the mainline trees, the mailing lists and the vendor binaries.
+- **2026-10-28 (i.MX95 DRAM):** the FRDM-IMX95-PRO findings (§2.20) were checked against the local imx95 repo, the pinned imx-oei source (`e9bce6f4`), the Yocto deploy directory and the board's own documents. §2.6, §2.14 and §2.17 were corrected to match.
 
 Nothing has been tried on a real board yet. Steps that depend on hardware behaviour are marked **(untested)**.
 
@@ -345,7 +347,7 @@ Prices below were checked 2026-10-22. They are distributor snapshots and are not
 | **FRDM-IMX93** (already owned) | i.MX93, 2× A55 1.7 GHz + M33 + NPU | LPDDR4X, 2 GB | ~$71–74 (Future), €69–71 (DigiKey) | NXP DDR tool | same as above |
 | MaaXBoard Mini | i.MX8M Mini, 4× A53 | LPDDR4 | $72.50 at launch (2020); now $149.95 with 0 stock (Avnet), €133 (Farnell) | NXP DDR tool (most mature target) | same as above |
 | FRDM-IMX8MPLUS | i.MX8M Plus, 4× A53 + NPU | LPDDR4 | ~$100–115 | NXP DDR tool | same as above |
-| **FRDM-IMX95** (already owned) | i.MX95, 6× A55 | LPDDR4X x32 (8 GB per QSG) | already paid | NXP DDR tool lists i.MX95 | same as above |
+| **FRDM-IMX95-PRO** (already owned) | i.MX95, 6× A55 | LPDDR5 x32, 16 GB (Micron MT62F4G32D8DV-023FAIT, UM12527) | already paid | NXP DDR tool lists i.MX95 | **Partly**: open imx-oei (BSD-3); the training firmware is a closed binary (§2.20) |
 | PocketBeagle 2 | TI AM6254, 4× A53 | 512 MB (LPDDR4 per CNX; one forum post says DDR4) | ~$29 | TI SysConfig DDR config + DDR-MARGIN-FW | **Yes**: U-Boot `k3-ddrss` (Cadence driver) |
 | STM32MP135F-DK | STM32MP135, 1× A7 | DDR3L x16, 512 MB, 533 MHz | ~€128 ex VAT (RS Italy) | CubeMX DDR test suite | **Yes**: software DQS gating, bit deskew and eye training in U-Boot SPL |
 
@@ -358,7 +360,7 @@ Prices below were checked 2026-10-22. They are distributor snapshots and are not
 
 - The DDR tool runs its test image from on-chip RAM over USB and does not touch the eMMC. You can learn the NXP workflow on either board for free.
 - The FRDM-IMX93 is the safer DDR-tool target. vTSA is listed for LPDDR4, and i.MX93 is a mature tool target.
-- On the FRDM-IMX95, check inside the tool whether it has a board config for it and whether vTSA works on i.MX95. I could not confirm either from NXP's page.
+- On the FRDM-IMX95-PRO, check inside the tool whether it has a board config for it and whether vTSA works on i.MX95. I could not confirm either from NXP's page, and I have not checked the board documents for them (§2.20 lists what is open).
 
 **The only purchase left is the Avaota-A1.** It has FEL recovery, so DRAM experiments can't brick it, and it is easy to order.
 
@@ -677,15 +679,16 @@ Micron's own chart lists 8 Gb and 16 Gb MT53, x16, 200-ball TFBGA parts for i.MX
 | 2. Clocks, voltage | blob on the A55 | open | open | open (imx-oei) |
 | 3. Controller setup | blob on the A55 | open | open code + tool-made values | same |
 | 4. PHY setup, ZQ | blob on the A55 (`ddrphy_phyinit_C_initPhyConfig`…) | open, magic offsets | open code + tool-made CSR values | same, newer PHY CSR map |
-| 5. Load training firmware | — | — | **blob** → PHY IMEM/DMEM, plus the message block (data) | **blob**, one image (64 KB + 64 KB), loaded by EDMA |
-| 6. Training | blob code starts the **PHY hardware engines** | open code starts the same engines (TPR10 bits) | **blob inside the PHY's MCU** (WrLvl, RxEn, Rd/WrDQ, deskew, CA, 2D); SPL only polls and reads results | **blob inside the PHY's MCU**, LPDDR5 6400 MT/s, ~5 s (QuickBoot ~1 ms) |
+| 5. Load training firmware | — | — | **blob** → PHY IMEM/DMEM, plus the message block (data) | **blob**, four binaries: IMEM 64,372 B + DMEM 65,536 B, plus the QuickBoot pair (25,756 B and 65,536 B), loaded by eDMA (§2.20) |
+| 6. Training | blob code starts the **PHY hardware engines** | open code starts the same engines (TPR10 bits) | **blob inside the PHY's MCU** (WrLvl, RxEn, Rd/WrDQ, deskew, CA, 2D); SPL only polls and reads results | **blob inside the PHY's MCU**, LPDDR5 6400 MT/s; **measured 4.87 s** for full training on the board (QuickBoot not measured) |
 | 7. Per-bit delays, eye scan | blob on the A55: **software eye scan** (`dst_dq_eye_scan`) | open, fixed delays, no eye scan | PIE program (opaque data); eye centering already done in the PMU | PIE per PState (opaque data) |
-| 8. Size, hand off | blob on the A55 (auto-scan, write-back) | open (auto-detect) | open (timing table, CSR save) | open (5,698 trained CSRs; QuickBoot data to NVM) |
+| 8. Size, hand off | blob on the A55 (auto-scan, write-back) | open (auto-detect) | open (timing table, CSR save) | open (5,698 trained CSRs, measured in the retention copy at M33 `0x2001A000`; QuickBoot data to NVM) |
 
 **How to read it.**
 
 - On the Avaota, every blob runs on the **CPU**, so you can step and reverse it. The only true black boxes are the PHY's hardware engines.
 - On the i.MX93, everything around training is open. The training itself is a blob running **inside the PHY**, out of reach of JTAG. You control its inputs (the message block) and read its outputs (results, mailbox stream, trained CSRs).
+- On the FRDM-IMX95-PRO, the code around training is open and runs on the M33 (imx-oei, BSD-3). Only the PHY's own MCU runs the closed firmware. The measurements are in §2.20.
 
 ### 2.15 Closed training firmware is the norm; recovery on the FRDM-IMX93
 
@@ -700,6 +703,7 @@ Micron's own chart lists 8 Gb and 16 Gb MT53, x16, 200-ball TFBGA parts for i.MX
   - Allwinner (mainline U-Boot, reverse-engineered),
   - coreboot's native RAM init for older Intel chipsets,
   - LiteDRAM on FPGAs.
+- **Checked locally on the FRDM-IMX95-PRO (§2.20):** the imx-oei repo at `e9bce6f4` (BSD-3) has the host code that loads the firmware and runs the sequence. It has no firmware in it. The four firmware binaries are in the Yocto deploy directory, as raw data with no source next to them.
 
 **So the numbers are the industrial skill.** A board engineer rarely writes training code. They:
 
@@ -806,8 +810,8 @@ Checked against:
 | Mailbox | `0xd0004` / `0xd0031` / `0xd0032` / `0xd0034`; codes `0x07` done, `0xff` fail, `0x08` streaming message | identical | ✅ your mailbox and streaming decoder |
 | Controller | NXP DDRC (RM ch. 114) | same register family | ✅ |
 | IMEM | `0x50000`, 64 KB | `0x50000`, 32 KB | ⚠ same base, half the size |
-| DMEM / message block | `0x58000`, 64 KB → `SequenceCtrl` at CSR `0x58008` | `0x54000`, 16 KB → `SequenceCtrl` at CSR `0x54008` | ❌ different base address |
-| Images | one image with a header `{imem_size, dmem_size}`, plus QuickBoot images | raw IMEM/DMEM; **1D and 2D are separate programs** | ❌ the 2D firmware is new work |
+| DMEM / message block | `0x58000`, 64 KB → `SequenceCtrl` at CSR `0x58008` (addresses not re-checked on 2026-10-28) | `0x54000`, 16 KB → `SequenceCtrl` at CSR `0x54008` | ❌ different base address |
+| Images | four separate binaries in the deploy directory: IMEM and DMEM, plus the QuickBoot pair (§2.20) | raw IMEM/DMEM; **1D and 2D are separate programs** | ❌ the 2D firmware is new work |
 | LPDDR4 message-block layout | `msb_ddr4x.h`: `SequenceCtrl 0x10`, `Quickboot 0x19`, `MR12_A0 0x37`, `MR14_A0 0x39`, `TrainedVREFDQ_A0 0x4d` | ST's LPDDR4 block (same generation as the i.MX93): `SequenceCtrl 0x10`, `HdtCtrl 0x12`, `MR12_A0 0x37`, `MR14_A0 0x39`; `0x4b–0x4e` reserved | ✅ mostly the same byte offsets; the newer firmware fills slots that were reserved |
 | LPDDR5 specifics | `msb_ddr5.h`: MR12 at `0x6e`, MR24/MR30, `TrainedDRAMDFE`/`DCA`; `SequenceCtrl 0x17df` | n/a | ❌ protocol-specific (WCK, DFE, DCA) |
 | PHY config CSRs | 84 (LPDDR4X) / 87 (LPDDR5); the same 84 in both | 129 | ❌ **only 2 addresses in common** |
@@ -831,7 +835,7 @@ Checked against:
 
 **So: the same *kind* of result, yes, for the LPDDR4 training steps.** Expect it to be much faster than the first time, but not free.
 
-**How to check it on the other PC.** The firmware files are in firmware-imx 8.21 (i.MX93) and 8.28 (i.MX95), under NXP's EULA.
+**How to check it on the other PC.** The firmware files come from firmware-imx: 8.21 for the i.MX93. For the i.MX95, the older yocto-imx95 tree has recipes for 8.28 and 8.30, and the PRO tree has 8.31 and 8.32. Which recipe ships the `v202409` binaries was not traced, so pin the version when you copy them. The licence terms (NXP's EULA) were not re-read on 2026-10-28.
 
 1. **Is the instruction set the same?** Load `lpddr4_imem_1d_v202201.bin` with your i.MX95 Ghidra module or disassembler. Clean decoding with sane control flow means the same core; garbage means a new ISA. This is the deciding check, and I couldn't verify it from public sources.
 2. **Use the bridge firmware.** firmware-imx 8.28 also ships `lpddr4x_{i,d}mem_v202409.bin` for the i.MX95 LPDDR4X EVK. It has the same PHY and firmware generation as your LPDDR5 work, but the LPDDR4X protocol like the i.MX93.
@@ -942,6 +946,42 @@ The full-time DDR jobs (2.7) are at chip companies (AMD, Intel, Qualcomm, Cadenc
 If you want one depth piece, time-box it to 2–3 weeks: the RZ/V2L Vref training (open C, easiest), or `dst_dq_eye_scan`.
 
 **The Avaota-A1 is still worth buying, mainly for BSP reasons.** A523/T527 is still being upstreamed (the DRAM init only reached U-Boot in July 2025), so it is a live target for mainline patches. FEL makes it safe to experiment on, and its DDR stays a side lesson.
+
+### 2.20 i.MX95 DRAM on the FRDM-IMX95-PRO: what we found locally
+
+Checked on the board and in the local source trees on 2026-10-20, and re-checked on 2026-10-28. The board is the PRO: six A55, M7, M33 and 16 GB LPDDR5. The §2.6 row that gave the FRDM-IMX95 as 8 GB LPDDR4X was wrong, and it is corrected there.
+
+**Status.** The notes, logs and disassembly are untracked files in the imx95 repo and are not committed. The submodule in this repo (`2.docs/frdm-imx95-pro-jtag`) is pinned at the pushed commit `453feac`, which does not include them. The sources are listed in §4.
+
+**Correction: the i.MX95 DDR training is not fully open.** It has three parts, in three states:
+
+| Part | State | Evidence |
+|---|---|---|
+| Controller and PHY setup, timing tables, firmware loading, message block, sequencing, saving the trained values | **Open**: NXP imx-oei, BSD-3 | `LICENSE.txt` and `oei/ddr/` at `e9bce6f4`; the firmware is loaded through the eDMA hook in `ddr.h` |
+| Training algorithm (write leveling, read and write training, eye search) | **Closed binary** | `lpddr5_{imem,dmem}[_qb]_v202409.bin` in the Yocto deploy directory: raw data, no ELF, no source on disk. The OEI repo contains no firmware. |
+| What the binary does | **Our reverse engineering** | `ddr-phy-fw-arcv2.asm`: 22,238 lines of ARCv2 disassembly. A disassembly, not source. |
+
+The firmware sizes are: IMEM 64,372 bytes and DMEM 65,536 bytes for the full image, and 25,756 bytes and 65,536 bytes for the QuickBoot pair. The PRO machine config names all four in `DDR_FIRMWARE_NAME`.
+
+**Measured on the board (2026-10-20):**
+- **Memory:** LPDDR5-6400, x32, no ECC, 16 GB (`0x080000000`–`0x47FFFFFFF`, from the SM monitor's `ddr` command). UM12527 names the part Micron MT62F4G32D8DV-023FAIT. The quick start guide says 16 GB LPDDR5, 32-bit.
+- **Boot path:** the SDP/uuu boot runs full 1D training on every boot; QuickBoot is not used on that path. The OEI reports `TRAINING complete in 4871966 us` (4.87 s), `IMEM + DMEM load in 3317 us`, and `done, err = 0`. U-Boot then sees 15.8 GiB.
+- **Build:** the OEI is `Build 217, Commit e9bce6f4`, for SoC MIMX95 B0 on board mx95lp5. That is the revision pinned in the mirror, so the binary and the source are the same version.
+- **Console:** the OEI prints to the SM console (ttyACM3), the same port as the SM monitor.
+- **Trained values:** the OEI keeps a retention copy in M33 TCM (`struct ddr_info` at `0x2001A000`). It holds 5,698 trained PHY CSR entries, the same count as the save list in the config. Six examples, config placeholder → trained value: `0x200a5` 0 → 0x01, `0xd0036` 0 → 0x00, `0x200bd` 0 → 0xff, `0x20300` 0 → 0x0808, `0x20303` 0 → 0x09, `0x20302` 0 → 0x26.
+- **Speed:** 6400 MT/s is the top LPDDR5 setpoint in this package. The part's 7500 and 8533 MT/s ratings are not used, because the config has no higher setpoint.
+
+**Reading DDR: JTAG and the SM monitor.**
+- JTAG cannot read DDR from the A55 side. The DDRC at `0x4E080000` faults on both the AHB-AP and the APB-AP, and the PHY at `0x4E800000` reads zero. The DDR sits in the M33/SM secure domain (TRDC). OCRAM reads fine, so the JTAG rig itself works.
+- The SM monitor can read the DDRC (`md 0x4e080000`). The PHY still reads zero from the M33, because its APB mux is off after training.
+
+**Still open:**
+- The training algorithm. Reverse engineering can document it, but it cannot replace it with source.
+- Most PHY CSR meanings. The OEI names the message block, not each PHY register.
+- Margins: the NXP DDR Tool's vTSA eye and an overnight stress run on this board have not been done.
+- QuickBoot: the ~1 ms figure in §2.14 comes from the notes and is not measured.
+- Whether the DDR Tool (Config Tools) runs on Linux for the validation part.
+- Whether the EVK's 19×19 board carries the same Micron part. Not checked.
 
 ---
 
@@ -1438,3 +1478,4 @@ Upstream:
 - i.MX93 vs i.MX95 DDR internals: U-Boot [imx93-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx93-u-boot.dtsi), [imx95-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx95-u-boot.dtsi), [imx95_evk.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/nxp/imx95_evk.rst), [arch-imx9/ddr.h](https://github.com/u-boot/u-boot/blob/master/arch/arm/include/asm/arch-imx9/ddr.h); imx-oei [oei/ddr](https://github.com/nxp-imx/imx-oei/tree/master/oei/ddr) (`ddrphy_train.c`, `ddrphy_utils.c`, `helper.c`, `ddr.h`, `msb_ddr4x.h`, `msb_ddr5.h`, `ddrphy_qb.c`), [mx95lp5 timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp5/ddr), [mx95lp4x timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp4x/ddr); QuickBoot: [U-Boot QuickBoot doc](https://concept-docs.readthedocs.io/en/latest/board/nxp/quickboot.html), [U-Boot patch series](https://lists.denx.de/pipermail/u-boot/2026-May/620233.html), [NXP community: i.MX95 DDR QuickBoot](https://community.nxp.com/t5/i-MX-Processors/i-MX95-DDR-Quick-Boot-Questions-on-Optimal-Training-Conditions/m-p/2179922); i.MX95 RM ch. 114 (local, `~/praxis/imx/rm`)
 - i.MX93 memory: [i.MX 93 Memory Compatibility Guide](https://community.nxp.com/t5/i-MX-Processors-Knowledge-Base/i-MX-93-Memory-Compatibility-Guide/ta-p/1725656), [Micron memory support for NXP (chart)](https://assets.micron.com/adobe/assets/urn:aaid:aem:09a7fea5-83ad-4f34-be20-136408496e91/renditions/original/as/nxp-compatibility-chart.pdf), [AN14012](https://nxp.com/docs/en/application-note/AN14012.pdf), [i.MX 93 product page](https://nxp.com/imx93), [MT53E1G16D1FW-046 AAT:A (DigiKey)](https://www.digikey.at/en/products/detail/micron-technology-inc/MT53E1G16D1FW-046-AAT-A/17632190), [i.MX 95 industrial datasheet](https://www.nxp.com/docs/en/data-sheet/IMX95IEC.pdf), [FRDM-IMX95 Pro LPDDR5-6400 (CNX)](https://www.cnx-software.com/2026/08/11/nxp-frdm-imx95-pro-i-mx-95-board-features-10gbe-faster-6400-mt-s-lpddr5-memory-dual-m-2-expansion/)
 - Board: [Pine64 store](https://pine64.com/?p=358314), [Pine64 docs](https://pine64.org/documentation/Yuzuki_Avaota-A1/_full/), [CNX Software article](https://cnx-software.com/2024/04/02/avaota-a1-open-source-hardware-sbc-allwinner-t527-octa-core-cortex-a55-soc), [linux-sunxi JTAG](https://linux-sunxi.org/JTAG), [linux-sunxi microSD breakout](https://linux-sunxi.org/MicroSD_Breakout)
+- Local i.MX95 DRAM work (§2.20; outside this repo, not committed yet): the imx95 notes and logs (`~/Project/5.elb1-t113/16.frdm-imx95-pro-jtag/imx95-ddr-training.md`, `logs/ddr-results-20261020.md`, `logs/ddr-oei-training-20261020.txt`, `logs/ddr-phy-fw-arcv2.asm`); the imx-oei mirror (`~/Learning/yocto-imx95/downloads/git2/github.com.nxp-imx.imx-oei.git`, revision `e9bce6f4`); the PRO deploy directory (`~/Learning/yocto-imx95-pro/frdm-imx95-pro-stock/tmp/deploy/images/imx95-19x19-lpddr5-frdm-pro/`); the PRO machine config (`~/Learning/yocto-imx95-pro/sources/meta-imx/meta-imx-bsp/conf/machine/imx95-19x19-lpddr5-frdm-pro.conf`); the board documents `frmd-imx95-pro/UM12527.pdf` and `frmd-imx95-pro/FRDMIMX95PROQSG.pdf` in the imx95 repo.
