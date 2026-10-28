@@ -38,19 +38,49 @@ run)
   elif [ -f "$D/redroid-pvr-13-arm64.tar" ]; then sudo docker load -i "$D/redroid-pvr-13-arm64.tar"
   else (cd "$D/redroid-pvr" && sudo docker build -t redroid-pvr:13 .); fi
 
-  echo "== 4. two instances, pinned (A55 = cpu0-5, A76 = cpu6-7)"
+  echo "== 4. CPU layout: host on cpu0 (A55), Android on cpu1-7"
+  # A55 = cpu0-5 (capacity 430/MHz), A76 = cpu6-7 (1024/MHz). cgroup v2 slices:
+  # everything systemd starts stays on cpu0; containers go in android.slice.
+  for s in system.slice user.slice init.scope; do sudo systemctl set-property --runtime $s AllowedCPUs=0; done
+  sudo mkdir -p /etc/systemd/system/android.slice.d
+  printf '[Slice]\nAllowedCPUs=1-7\n' | sudo tee /etc/systemd/system/android.slice.d/cpus.conf >/dev/null
+  sudo systemctl daemon-reload
+  # interrupts (network, eMMC, USB, GPU) on cpu0 as well
+  echo 1 | sudo tee /proc/irq/default_smp_affinity >/dev/null
+  for f in /proc/irq/*/smp_affinity; do echo 1 | sudo tee "$f" >/dev/null 2>&1 || true; done
+
+  echo "== 5. memory: zram (compressed RAM swap; no swap on eMMC)"
+  MEM_MB=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
+  if [ "$MEM_MB" -lt 5000 ]; then ZRAM=3G; LIMIT=1600m; else ZRAM=2G; LIMIT=2200m; fi
+  if ! grep -q zram0 /proc/swaps; then
+    sudo modprobe zram 2>/dev/null || true
+    echo zstd | sudo tee /sys/block/zram0/comp_algorithm >/dev/null
+    echo $ZRAM | sudo tee /sys/block/zram0/disksize >/dev/null
+    sudo mkswap /dev/zram0 >/dev/null && sudo swapon -p 100 /dev/zram0
+  fi
+  echo 100 | sudo tee /proc/sys/vm/swappiness >/dev/null   # zram is cheap, eMMC never used
+  echo "  RAM ${MEM_MB} MB -> zram $ZRAM, container limit $LIMIT (+1G zram each)"
+
+  echo "== 6. two instances: each 1 dedicated A76 + 2 dedicated A55 + 1 shared A55"
+  # SHARED_DATA=1: apps installed once in $D/data-base, each instance keeps only its diff
   for i in 1 2; do
-    if [ $i = 1 ]; then CPUS=0,1,2,6; else CPUS=3,4,5,7; fi
+    if [ $i = 1 ]; then CPUS=1,2,5,6; else CPUS=3,4,5,7; fi
+    if [ "${SHARED_DATA:-0}" = 1 ]; then
+      VOL=(-v "$D/data-base":/data-base -v "$D/data-diff$i":/data-diff); EXTRA=androidboot.use_redroid_overlayfs=1
+    else
+      VOL=(-v "$D/data$i":/data); EXTRA=
+    fi
     sudo docker rm -f android$i 2>/dev/null || true
     sudo docker run -itd --privileged --name android$i \
-      --cpuset-cpus=$CPUS --memory=1536m --memory-swap=2g \
-      -v "$D/data$i":/data -p $((5554+i)):5555 \
+      --cgroup-parent=android.slice --cpuset-cpus=$CPUS \
+      --memory=$LIMIT --memory-swap=$(( ${LIMIT%m} + 1024 ))m \
+      "${VOL[@]}" -p $((5554+i)):5555 \
       redroid-pvr:13 \
       androidboot.redroid_gpu_mode=host \
       androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 \
-      androidboot.redroid_fps=30 androidboot.use_memfd=1
+      androidboot.redroid_fps=30 androidboot.use_memfd=1 $EXTRA
   done
-  echo "connect: adb connect <board-ip>:5555  and  :5556   (checks: README section 6)"
+  echo "connect: adb connect <board-ip>:5555  and  :5556   (checks: README section 10)"
   ;;
 *) echo "usage: $0 kernel|run"; exit 1;;
 esac

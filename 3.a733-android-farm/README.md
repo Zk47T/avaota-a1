@@ -134,6 +134,7 @@ Toolchain:
 | `SW_SYNC=y` | explicit fences |
 | `VETH=y`, `BRIDGE_NETFILTER=y`, `BRIDGE_VLAN_FILTERING=y` | Docker networking |
 | `IP6_NF_TARGET_MASQUERADE=m`, `NFT_FIB_IPV4/IPV6/INET=m` | Docker ≥27 ip6tables default, and the ≥28 nftables backend |
+| `UCLAMP_TASK(_GROUP)=y`, `ENERGY_MODEL=y`, `LRU_GEN(_ENABLED)=y`, `CRYPTO_LZ4=y` | foreground boost onto the A76, energy-aware scheduling, better reclaim and zram for 4 GB boards (section 8.1) |
 
 ## 7. Before buying: verify on your other redroid PC
 
@@ -230,6 +231,59 @@ Why route B is worth it:
 - Total cost is about the same as a Zero 4 with an add-on fan.
 - The USB NCM gadget is a valid alternative if every board plugs into one controller PC anyway.
 - `scripts/45-usb-net.sh dongle|gadget|status` sets up either.
+
+### 8.1 Sizing: CPU, GPU, RAM, storage for 2 × TikTok/Instagram
+
+**CPU layout** (`40-board-setup.sh run`). The A733 DT gives `capacity-dmips-mhz` A55 = 430, A76 = 1024. At 1.8 vs 2.0 GHz, one A55 ≈ 0.38 A76.
+
+| CPUs | Used by |
+|---|---|
+| cpu0 (A55) | host: systemd slices `AllowedCPUs=0`, all IRQs, dockerd, zram compression |
+| cpu1, 2 (A55) + **cpu6 (A76)** | instance 1 |
+| cpu3, 4 (A55) + **cpu7 (A76)** | instance 2 |
+| cpu5 (A55) | shared spare for both instances |
+
+- Don't restrict Android to the A76 only. An instance runs about 100 threads (system_server, SurfaceFlinger, the app, codecs), and one big core alone would starve.
+- The kernel scheduler (capacity-aware, `schedutil`) already moves the heavy app threads to the instance's A76.
+- The fragment adds `UCLAMP_TASK(_GROUP)`, so Android's foreground boost works; `ENERGY_MODEL` (EAS, using the DT power coefficients); and `LRU_GEN` (MGLRU).
+
+**GPU for TikTok/Instagram: not the bottleneck.**
+- BXM-4-64 ≈ 4 pixels/clock × ~1 GHz ≈ 4 Gpixel/s.
+- Two 720×1280 @ 30 fps screens are 55 Mpixel/s. Even at 10× overdraw (UI layers, video texture, composition) that's ~14% of the GPU.
+- The real cost is **video decoding**: redroid uses software codecs on the CPU, and some apps ship their own software decoders anyway.
+  - 720p H.264 ≈ 0.3–0.5 of an A76; 720p HEVC more.
+  - That's why each instance gets a dedicated A76.
+- Next improvement: wire the A733 video engine (`cedar-ve`, already in the kernel) into the containers through Allwinner's Android Codec2 HAL, the same way the GPU was done. It decodes 4K60 HEVC, so 2 × 720p is trivial for it.
+
+**RAM per instance** (redroid 13, no GMS; rough):
+
+| | Typical |
+|---|---|
+| Android system (system_server, SF, HALs) | 0.7–0.9 GB |
+| TikTok or Instagram in foreground | 0.4–0.7 GB |
+| GMS / microG, if needed | +0.2–0.4 GB |
+| **Instance total** | **1.3–1.9 GB** |
+
+| Board | Host | 2 instances | Verdict |
+|---|---|---|---|
+| **6 GB** (Zero 3W $60, **Zero 4 $63**) | ~0.4 GB | 2 × 2.2 GB limit + 2 GB zram | comfortable |
+| 4 GB (Zero 4 $52) | ~0.4 GB | 2 × 1.6 GB limit + **3 GB zram** | works with **one app per instance**; background apps get killed, some stutter when switching |
+
+- Use **zram, not swap on eMMC**. eMMC swap has high latency (jank, ANRs) and wears out a chip you hand-soldered.
+- zstd zram compresses Android memory about 2.5–3×, and the spare A55s pay the compression cost.
+- For +$11 the 6 GB board removes the problem. Pick 4 GB only if the budget forces it.
+
+**Storage per instance:**
+- The Android system lives in the Docker image, which is shared and read-only (~2 GB once per board).
+- Per-instance `/data` holds TikTok (~0.5 GB installed) + Instagram (~0.4 GB) + caches. TikTok's video cache can grow to 1–2 GB, so **4 GB per instance is enough** if you trim caches now and then (`adb shell pm trim-caches 1G`).
+- `SHARED_DATA=1 ./40-board-setup.sh run` uses redroid's overlay `/data`: apps are installed once in `data-base`, and each instance keeps only its diff (account + cache, ~1–2 GB).
+- 16 GB eMMC budget: host ~2.5 GB + image ~2 GB + 2 × 4 GB data ≈ 12.5 GB. That fits; 32 GB gives room.
+
+**Zero 4 (6 GB) vs Zero 3W (6 GB) for this farm:**
+- **Zero 4:** RJ45 GbE onboard, so one power cable + one Ethernet cable and no dongle or hub. Add a heatsink and a 30 mm fan on its fan header.
+- **Zero 3W:** active cooler in the kit, but it needs a USB-C GbE dongle.
+- Same SoC, same images, same kernel, about the same total cost.
+- For a farm the **Zero 4** is simpler to cable and has fewer USB failure points. Keep the Zero 3W for RAM/eMMC/UFS rework.
 
 ## 9. On the A733 board
 

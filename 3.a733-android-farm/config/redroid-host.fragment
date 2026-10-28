@@ -19,3 +19,14 @@ CONFIG_NFT_FIB_IPV4=m
 CONFIG_NFT_FIB_IPV6=m
 CONFIG_NFT_FIB_INET=m
 CONFIG_BRIDGE_VLAN_FILTERING=y
+# Scheduling / memory for 2 Android instances on 2xA76 + 6xA55:
+# uclamp lets Android (and cgroups) boost the foreground app onto the A76s;
+# EAS uses the dynamic-power-coefficient already in the A733 DT;
+# MGLRU reclaims better under memory pressure (4 GB boards + zram).
+CONFIG_UCLAMP_TASK=y
+CONFIG_UCLAMP_TASK_GROUP=y
+CONFIG_UCLAMP_BUCKETS_COUNT=20
+CONFIG_ENERGY_MODEL=y
+CONFIG_LRU_GEN=y
+CONFIG_LRU_GEN_ENABLED=y
+CONFIG_CRYPTO_LZ4=y
