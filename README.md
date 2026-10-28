@@ -1,11 +1,13 @@
 # Avaota-A1 (Allwinner T527 / A527): JTAG and DRAM-training notes
 
-Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer four questions:
+Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer six questions:
 
 1. How do I enable JTAG on this chip? (Section 1)
 2. Can I use this cheap board to learn DRAM (LPDDR4) training? (Section 2)
 3. Would an NXP i.MX board be a better buy, and is DDR training in demand? (Sections 2.6 and 2.7)
 4. How do the Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro compare for DDR work, and does i.MX95 PHY-firmware reverse engineering carry over to the i.MX93? (Sections 2.16 and 2.17)
+5. What can you learn about DRAM with T113-S3, RZ/V2L SMARC, Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro together? (Section 2.18)
+6. Which parts of this actually pay off for an embedded Linux BSP job target? (Section 2.19)
 
 Everything here was checked on 2026-10-22 against the files in this repo (schematic v1.7, BOM v1.7, the Allwinner manuals) and against upstream source code (xfel, SyterKit, U-Boot and OpenOCD). Nothing has been tried on a real board yet. Steps that depend on hardware behaviour are marked **(untested)**.
 
@@ -825,6 +827,106 @@ Checked against:
    - Break in SPL before `0xd0099` (section 2.12) and flip `SequenceCtrl` bits to confirm which code paths run.
    - Dump the 976 trained CSRs and compare them with what your model predicts.
 
+### 2.18 What the five boards teach together
+
+You own T113-S3, RZ/V2L SMARC, Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro. Together they cover every mainstream embedded DRAM generation from DDR3 to LPDDR5, three ways of training, and three vendors.
+
+**What each board has:**
+
+| | T113-S3 | RZ/V2L SMARC | Avaota-A1 | FRDM-IMX93 | FRDM-IMX95 Pro |
+|---|---|---|---|---|---|
+| DRAM | **DDR3**, in the package, x16, 128 MB | **DDR4**, 1 chip, x16, 2 GB | **LPDDR4**, x32 (2 channels), 4 GB | **LPDDR4X**, x16, 2 GB | **LPDDR5**, x32, 16 GB |
+| Speed | 792 MHz = 1584 MT/s | DDR4-1600 | ≈ 2400 MT/s | 3733 MT/s | 6400 MT/s |
+| One UI (bit time) | ≈ 631 ps | ≈ 625 ps | ≈ 417 ps | ≈ 268 ps | ≈ 156 ps |
+| Training | PHY engines + CPU code (`dqs_gate_detect`, `eye_delay_compensation`) | PHY commands + **algorithms in C** (write leveling, **software Vref sweep**, bit leveling, `opt_delay`, SL) | PHY engines + **software eye scan** (blob on the CPU) | **PMU firmware** v2022.01 (1D + 2D) | **PMU firmware** v2024.09 + QuickBoot |
+| DRAM init code | open: U-Boot `dram_sun20i_d1.c`, based on decompiled Allwinner code (via awboot) | open: Renesas TF-A BL2 `plat/renesas/rz/common/drivers/ddr/ddr.c` (BSD-3), plus generated parameter tables | open mainline / closed `libdram` | open U-Boot + closed PMU firmware | open imx-oei + closed PMU firmware |
+| Register names | none (magic offsets) | numbered only (`DDRMC_R000…`, `DDRPHY_R00…`) | none (magic offsets) | controller in the RM; PHY names via ST's PhyInit | controller in the RM ch. 114 |
+| Inline ECC | no | yes (the BSP skips it: "ECC is unused") | not listed | yes | yes |
+| Recovery | FEL | SCIF download + Flash Writer over UART | FEL | SDP + `uuu` | SDP + `uuu` |
+| Debug | JTAG via SD sniffer (yours, working) | JTAG/SWD; OpenOCD has `renesas_rz.cfg` (RZ/V2L: 2× A55 + M33) | JTAG via SD (untested) | SWD at 1.8 V (rework) | JTAG + ETM trace (yours, working) |
+
+**Coverage:**
+
+- **DRAM types:** DDR3 → DDR4 → LPDDR4 → LPDDR4X → LPDDR5.
+- **Training styles:**
+  1. Open C on the CPU: T113, RZ/V2L, Avaota mainline.
+  2. A closed blob on the CPU: Avaota `libdram`.
+  3. Firmware inside the PHY: i.MX93, i.MX95.
+- **Vendors:** Allwinner, Renesas, NXP (with Synopsys IP).
+
+**Not covered:** DDR5, LPDDR5X, DIMMs and fly-by multi-rank boards, x64 server memory, and measuring signal integrity with a scope.
+
+**What each board teaches best:**
+
+| Board | Lesson |
+|---|---|
+| **T113-S3** | **DDR3 fundamentals in plain C.** All of the init is readable, and you already step it with JTAG. The RAM sits inside the SoC package, so there is no PCB routing: training sees only the package. |
+| **RZ/V2L SMARC** | **DDR4, and a vendor's own training algorithms in readable C.** `exec_trainingVREF()` sweeps Vref, measures two window edges per lane and picks the middle. That is a real eye/Vref search, the white-box version of what the PMUs hide. It also has DDR4-specific ideas (bank groups, RTT_NOM/WR/PARK, VrefDQ in MR6) and inline ECC you can turn on. |
+| **Avaota-A1** | **LPDDR4 with two channels, plus reverse engineering.** **The T113 driver is your Rosetta stone:** it comes from the same Allwinner code lineage, and 10 function names match `libdram` exactly (`init_DRAM`, `mctl_sys_init`, `mctl_com_init`, `mctl_channel_init`, `mctl_core_init`, `DRAMC_get_dram_size`, `dramc_simple_wr_test`, `auto_scan_dram_size`, `auto_scan_dram_rank_width`, `auto_scan_dram_config`). The open layout and IBIS models let you connect results to the PCB. |
+| **FRDM-IMX93** | **The industrial workflow:** NXP DDR tool, vTSA eyes, message block, `HdtCtrl` streaming, and JTAG on SPL. |
+| **FRDM-IMX95 Pro** | **LPDDR5 and boot time.** Training takes about 5 s; QuickBoot cuts it to about 1 ms, which matters directly for your fast-boot work. Also your PMU reverse engineering, and porting it to the i.MX93 (2.17). |
+
+**Suggested order:**
+
+1. **Fundamentals, open code (T113, then RZ/V2L).**
+   - Read `dram_sun20i_d1.c` next to JESD79-3 (DDR3), and Renesas `ddr.c` next to JESD79-4 (DDR4).
+   - Decode the mode registers. For example, T113 MR0 = `0x1c70`: burst length, CAS latency, write recovery.
+   - Add a `printf` in `exec_trainingVREF()` for `window_0`, `window_1` and `current_vref`. That is your first Vref-versus-window plot.
+2. **LPDDR4 and reverse engineering (Avaota).**
+   - Experiment with the mainline TPR10 bits (2.4).
+   - Reverse `dst_dq_eye_scan` (2.9), using the T113 driver and the RZ/V2L Vref sweep as references for what such code looks like.
+3. **The industrial PMU flow (FRDM-IMX93).** DDR tool, stress, vTSA, message-block experiments (2.12, 2.15).
+4. **LPDDR5 and QuickBoot (FRDM-IMX95).** Measure full training against QuickBoot, then carry your PMU work to the i.MX93 (2.17).
+
+**The same experiments on all five boards:**
+
+1. **Margin shmoo.** Sweep frequency against Vref, convert the eye width to ps using each board's UI, and compare across technologies.
+2. **Training time and skip mechanisms.** Allwinner writes parameters back to flash; QuickBoot reuses saved results; the RZ/V2L and i.MX93 retrain on every boot.
+3. **Fault injection.** Use wrong ODT, drive strength or Vref, then compare the failure signatures: a training failure, memtest errors, or silent corruption.
+4. **ECC.** Turn on inline ECC on the RZ/V2L, i.MX93 and i.MX95. The i.MX95 RM lists error-injection registers (`DATA_ERR_INJECT_HI/LO`, `ERR_INJECT`) for forcing single-bit and double-bit errors.
+5. **Self-refresh, retention, frequency set points, temperature.** Use a hair dryer or freezer spray while a memtest runs.
+
+### 2.19 Does it pay off for an embedded Linux BSP target?
+
+**Only a thin slice of it does. The full DDR programme is a specialist path, not a BSP path.**
+
+Your own survey (`elb1-t113/4.docs/reports/Embedded Linux industry requirements.md`, about 20 postings, 2025–2026) found:
+
+- **"DDR initialisation or training almost never appears as a hiring requirement."** It is a rare skill, not an expected one.
+- **What BSP employers rank, in order:**
+  1. bring-up and low-level debug (JTAG, boot chain, DT, drivers);
+  2. kernel lifecycle (uprevs, SBOM/CVE, CRA);
+  3. signed A/B OTA;
+  4. verified boot;
+  5. boot time;
+  6. … ;
+  11. upstream record, which is strong at consultancies.
+- Neither Bootlin's nor the Linux Foundation's courses teach DDR or JTAG-level bring-up. So a *documented* JTAG-plus-DDR bring-up stands out, but only as **evidence of bring-up**, not as DDR science.
+
+The full-time DDR jobs (2.7) are at chip companies (AMD, Intel, Qualcomm, Cadence). They want an EE background and post-silicon lab years, mostly in the US or Asia.
+
+**You already have the best BSP-shaped DDR result:** DDR QuickBoot on the FRDM-IMX95 Pro took **3.118 s → 0.234 s (−2884 ms)**, the biggest single win in `meta-fastboot-imx95`. That is how DDR knowledge earns its place on a BSP CV: as a boot-time, bring-up or reliability number.
+
+**Keep these.** About 4–6 weeks in total, all of it reading as BSP work:
+
+| Deliverable | Board | Time | BSP signal it proves |
+|---|---|---|---|
+| **DDR bring-up as if for a custom board:** DDR tool config → `lpddr4x_timing.c` in SPL → `uuu` recovery loop → overnight stress + vTSA → a one-page validation report | FRDM-IMX93 | 1–2 weeks | #1 bring-up ("first power-on to a stable platform", EVT/DVT) |
+| **DDR's share of boot time:** SPL timestamps of DDR init on i.MX93, Avaota, T113, RZ/V2L, next to your i.MX95 QuickBoot result | all | 2–3 days | #5 boot time, measured on four SoCs |
+| **Early-boot debug write-up:** halt SPL/BL2 inside DDR init over JTAG/SWD; hardware-first triage | i.MX93 (SWD), T113, RZ/V2L | ~1 week | #1 register-level debug |
+| **ECC and crash records:** enable inline ECC, inject errors through the DDRC, check how Linux reports them (EDAC, if a driver exists; a missing one is an upstream opportunity), ramoops in an ECC region | i.MX95 or RZ/V2L | ~1 week | #7 reliability, plus possibly #11 upstream |
+
+**Defer unless you choose the memory-firmware career:**
+
+- reversing `libdram` (2.9);
+- porting your i.MX95 PMU reverse engineering to the i.MX93 (2.17);
+- RAM chip swaps (2.8);
+- the five-board shmoo matrix.
+
+If you want one depth piece, time-box it to 2–3 weeks: the RZ/V2L Vref training (open C, easiest), or `dst_dq_eye_scan`.
+
+**The Avaota-A1 is still worth buying, mainly for BSP reasons.** A523/T527 is still being upstreamed (the DRAM init only reached U-Boot in July 2025), so it is a live target for mainline patches. FEL makes it safe to experiment on, and its DDR stays a side lesson.
+
 ---
 
 ## 3. Sources
@@ -852,6 +954,7 @@ Upstream:
 - ST: [STM32MP135F-DK](https://www.st.com/en/evaluation-tools/stm32mp135f-dk.html), [RS Italy price](https://it.rs-online.com/web/p/strumenti-di-sviluppo-per-microcontrollori/2615098), [U-Boot SPL DDR interactive mode](https://wiki.st.com/stm32mpu-ecosystem-v3/wiki/U-Boot_SPL:_DDR_interactive_mode), [DDRCTRL/DDRPHYC DT configuration](https://wiki.st.com/stm32mpu/wiki/DDRCTRL_and_DDRPHYC_device_tree_configuration)
 - Jobs: [AMD Memory PHY FW (Austin)](https://www.jobleads.com/us/job/memory-phy-firmware-engineer-ddr-lpddr--austin--eca55330dc134d678816ab0f2c8394cc3), [AMD DDR/LPDDR FW (Bengaluru)](https://www.electronicsforu.com/career/firmware-engineer-ddr-lpddr-amd-bengaluru), [Intel DDR PHY FW](https://intel.wd1.myworkdayjobs.com/External/job/Mexico-Guadalajara/DDR-PHY-Firmware-Engineer_JR0285805), [Cadence principal FW](https://cadence.wd1.myworkdayjobs.com/en-US/External_Careers/job/Principal-Firmware-Engineer_R53293), [Astera Labs DDR FW lead](https://theorg.com/org/astera-labs/jobs/tech-lead-firmware-engine-89478810), [Qualcomm DDR PHY system design](https://bebee.com/us/jobs/ddr-phy-system-design-engineer-san-diego-us-qualcomm-san-diego-ca--t7xk-793302983), [ZipRecruiter DDR PHY engineer](https://www.ziprecruiter.com/Jobs/Ddr-Phy-Engineer), [memory market 2026 overview](https://intuitionlabs.ai/articles/hbm-dram-ai-memory-demand)
 - FRDM-IMX93 debug and DDR: [2.docs/jlink-imx93](2.docs/jlink-imx93) (NXP community post, saved), [FRDM-IMX93 user manual UM12181](https://mouser.com/pdfDocs/FRDM-IMX93_UM.pdf), U-Boot [ddrphy_train.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_train.c), [ddrphy_utils.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_utils.c), [imx9 ddr_init.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/imx9/ddr_init.c), [imx93_frdm board](https://github.com/u-boot/u-boot/tree/master/board/nxp/imx93_frdm), TF-A Synopsys PhyInit for STM32MP2: [CSR names](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/phyinit/include/ddrphy_csr_all_cdefines.h), [LPDDR4 message block](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/firmware/include/mnpmusrammsgblock_lpddr4.h)
+- T113-S3 and RZ/V2L: U-Boot [dram_sun20i_d1.c](https://github.com/u-boot/u-boot/blob/master/drivers/ram/sunxi/dram_sun20i_d1.c), [mangopi_mq_r_defconfig](https://github.com/u-boot/u-boot/blob/master/configs/mangopi_mq_r_defconfig), [awboot](https://github.com/szemzoa/awboot); Renesas TF-A [plat/renesas/rz/common/drivers/ddr/ddr.c](https://github.com/renesas-rz/rzg_trusted-firmware-a/blob/v2.3/rzg2l/plat/renesas/rz/common/drivers/ddr/ddr.c), [RZ/V2L DDR params](https://github.com/renesas-rz/rzg_trusted-firmware-a/tree/v2.3/rzg2l/plat/renesas/rz/soc/v2l/drivers/ddr), [RZ/V2L product page](https://www.renesas.com/us/en/products/microcontrollers-microprocessors/rz-mpus/rzv2l-general-purpose-microprocessor-equipped-renesas-original-ai-dedicated-accelerator-drp-ai-12ghz-dual), [SolidRun RZ/G2L·V2L SOM manual](https://solidrun.atlassian.net/wiki/spaces/developer/pages/511148033/RZ+G2L+and+RZ+V2L+SOM+Hardware+User+Manual), [Zephyr RZ/V2L SMARC (boot switches)](https://docs.zephyrproject.org/latest/boards/renesas/rzv2l_smarc/doc/index.html), [SMARC EVK RZ/V2L Linux start guide](https://www.renesas.com/en/document/gde/smarc-evk-rzv2l-linux-start-guide-rev104), OpenOCD [renesas_rz.cfg](https://github.com/openocd-org/openocd/blob/master/tcl/target/renesas_rz.cfg)
 - i.MX93 vs i.MX95 DDR internals: U-Boot [imx93-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx93-u-boot.dtsi), [imx95-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx95-u-boot.dtsi), [imx95_evk.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/nxp/imx95_evk.rst), [arch-imx9/ddr.h](https://github.com/u-boot/u-boot/blob/master/arch/arm/include/asm/arch-imx9/ddr.h); imx-oei [oei/ddr](https://github.com/nxp-imx/imx-oei/tree/master/oei/ddr) (`ddrphy_train.c`, `ddrphy_utils.c`, `helper.c`, `ddr.h`, `msb_ddr4x.h`, `msb_ddr5.h`, `ddrphy_qb.c`), [mx95lp5 timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp5/ddr), [mx95lp4x timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp4x/ddr); QuickBoot: [U-Boot QuickBoot doc](https://concept-docs.readthedocs.io/en/latest/board/nxp/quickboot.html), [U-Boot patch series](https://lists.denx.de/pipermail/u-boot/2026-May/620233.html), [NXP community: i.MX95 DDR QuickBoot](https://community.nxp.com/t5/i-MX-Processors/i-MX95-DDR-Quick-Boot-Questions-on-Optimal-Training-Conditions/m-p/2179922); i.MX95 RM ch. 114 (local, `~/praxis/imx/rm`)
 - i.MX93 memory: [i.MX 93 Memory Compatibility Guide](https://community.nxp.com/t5/i-MX-Processors-Knowledge-Base/i-MX-93-Memory-Compatibility-Guide/ta-p/1725656), [Micron memory support for NXP (chart)](https://assets.micron.com/adobe/assets/urn:aaid:aem:09a7fea5-83ad-4f34-be20-136408496e91/renditions/original/as/nxp-compatibility-chart.pdf), [AN14012](https://nxp.com/docs/en/application-note/AN14012.pdf), [i.MX 93 product page](https://nxp.com/imx93), [MT53E1G16D1FW-046 AAT:A (DigiKey)](https://www.digikey.at/en/products/detail/micron-technology-inc/MT53E1G16D1FW-046-AAT-A/17632190), [i.MX 95 industrial datasheet](https://www.nxp.com/docs/en/data-sheet/IMX95IEC.pdf), [FRDM-IMX95 Pro LPDDR5-6400 (CNX)](https://www.cnx-software.com/2026/08/11/nxp-frdm-imx95-pro-i-mx-95-board-features-10gbe-faster-6400-mt-s-lpddr5-memory-dual-m-2-expansion/)
 - Board: [Pine64 store](https://pine64.com/?p=358314), [Pine64 docs](https://pine64.org/documentation/Yuzuki_Avaota-A1/_full/), [CNX Software article](https://cnx-software.com/2024/04/02/avaota-a1-open-source-hardware-sbc-allwinner-t527-octa-core-cortex-a55-soc), [linux-sunxi JTAG](https://linux-sunxi.org/JTAG), [linux-sunxi microSD breakout](https://linux-sunxi.org/MicroSD_Breakout)
