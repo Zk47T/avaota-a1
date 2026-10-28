@@ -1,6 +1,6 @@
 # Avaota-A1 (Allwinner T527 / A527): JTAG and DRAM-training notes
 
-Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer six questions:
+Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer seven questions:
 
 1. How do I enable JTAG on this chip? (Section 1)
 2. Can I use this cheap board to learn DRAM (LPDDR4) training? (Section 2)
@@ -8,6 +8,7 @@ Research notes for the YuzukiHD / Pine64 **Avaota-A1** board. They answer six qu
 4. How do the Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro compare for DDR work, and does i.MX95 PHY-firmware reverse engineering carry over to the i.MX93? (Sections 2.16 and 2.17)
 5. What can you learn about DRAM with T113-S3, RZ/V2L SMARC, Avaota-A1, FRDM-IMX93 and FRDM-IMX95 Pro together? (Section 2.18)
 6. Which parts of this actually pay off for an embedded Linux BSP job target? (Section 2.19)
+7. What does the Avaota-A1 add over your T113-S3 board, and can the T527 do instruction trace like the i.MX95? (Section 3)
 
 Everything here was checked on 2026-10-22 against the files in this repo (schematic v1.7, BOM v1.7, the Allwinner manuals) and against upstream source code (xfel, SyterKit, U-Boot and OpenOCD). Nothing has been tried on a real board yet. Steps that depend on hardware behaviour are marked **(untested)**.
 
@@ -88,6 +89,9 @@ The ball has no test pad, so leave it alone.
 
 - **xfel**: `xfel jtag` on T113 (`chips/r528_t113.c`) runs a small payload that sets PF0/1/3/5 to function 3 in `0x020000F0`. On the A523/A527/T527 family (`chips/a523_a527_t527.c`, xfel master 2026-09-14), `chip_jtag()` is an **empty stub that returns 0**, so `xfel jtag` does nothing. Use `xfel write32` instead (method A below).
 - **Boot chain**: every boot-select option printed on schematic sheet 4 probes **SMHC0 (the SD slot) first**, so the BROM switches PF to SD mode while it probes. SyterKit (`mmc0_pins`: PF0–PF5, function 2), U-Boot and Linux also take PF0–PF5 for `mmc0`. On T113, your image or tooling had already put these pins in JTAG mode for you.
+- **Correction, from your own T113 measurement:** elb1 field doc 07 §7 (2026-10-06) found that the T113 **boot ROM itself muxes the JTAG pins in FEL**, so no write was needed there. The T527 boot ROM may do the same.
+  - **Check:** enter FEL and run `xfel read32 0x020000f0`. If PF0/1/3/5 already read function 3 (`…3?3?33`), attach directly; xfel's empty `chip_jtag()` may simply mean nothing is needed.
+  - **If not,** use method A below.
 
 ### 1.5 Five ways to turn it on
 
@@ -929,7 +933,124 @@ If you want one depth piece, time-box it to 2–3 weeks: the RZ/V2L Vref trainin
 
 ---
 
-## 3. Sources
+## 3. Avaota-A1 vs T113-S3: what the Avaota adds
+
+**Sources.**
+
+- **T113 side:** your `elb1-t113` README and its field docs (tags `[V]` there), plus the industry report.
+- **Avaota side:**
+  - the T527 datasheet V0.95 and user manual V0.94 in `2.docs`;
+  - schematic and BOM v1.7;
+  - mainline Linux `arch/arm64/boot/dts/allwinner/sun55i-a523.dtsi` and `sun55i-t527-avaota-a1.dts` (torvalds master, read 2026-10-28);
+  - U-Boot master;
+  - upstream TF-A.
+
+`[?]` = not verified on hardware.
+
+### 3.1 Silicon
+
+| | T113-S3 (elb1, MQ-Dual, LCPI-PC) | T527 (Avaota-A1) | What it adds |
+|---|---|---|---|
+| CPU | 2× Cortex-A7, ARMv7-A, 32-bit | **8× Cortex-A55, ARMv8.2-A**, AArch64 + AArch32 at every EL; DynamIQ big.LITTLE (L2 64 KB little / 128 KB big, DSU with L3); up to 1.8 GHz | 64-bit, EL0–EL3, two clusters, 8-core SMP |
+| Interrupts | GIC-400 (GICv2) | **GIC-600 (GICv3)** | redistributors, affinity routing, system-register CPU interface |
+| Extensions | — | TrustZone, **RAS**, optional crypto extensions | EL3 firmware, RAS error records |
+| Debug/trace | ARMv7.1 debug; **no ETM** (your doc 80) | **CoreSight SoC-600**; UM: "each core allows tracing supported by ETM"; CoreSight timestamp generator at `0x08010000` / `0x08020000` | instruction trace *if* a sink exists (3.4) |
+| DRAM | **128 MB DDR3 in the package** (S4: 256 MB) | **4 GB LPDDR4 x32**, external chip | real memory; DRAM init and training (section 2) |
+| GPU | none (software rendering, G2D) | **Mali-G57 MC1** | a real 3D/compute stack (Panfrost/Mesa) |
+| NPU | none | **2 TOPS** (Vivante GC per the mainline node) | ML acceleration |
+| Video engine | 1080p H.264/H.265 decode (Cedrus; you measured 111 fps) | **4K60 H.265/VP9 decode, 4K30 H.264 decode, 4K25 H.264 encode** | 4K, plus an encoder |
+| Display out | RGB, LVDS, 2-lane DSI (your REV5), TV out; one LCD controller | **HDMI 2.0, eDP 1.3, 4+4-lane DSI, 2× dual-link LVDS, 2× RGB** | multi-display, HDMI/DP |
+| Camera in | parallel DVP (CSIC; your own driver) | **MIPI CSI 4+4 lanes, ISP**, parallel CSI | MIPI CSI-2 + an ISP (your i.MX95 camera roadmap, on cheap hardware) |
+| High-speed I/O | USB 2.0 only | **USB 3.1 / PCIe 2.1 combo** (one lane, either/or), 2× USB 2.0 | USB3 or PCIe (but see 3.2) |
+| Ethernet | 1× 100M EMAC (dropped on REV5) | **2× GbE (GMAC + GMAC200)** | dual gigabit (routing, TSN-style labs) |
+| CAN | 2× CAN (mainline-ready) | 2× CAN | same |
+| RISC-V | C906 on the die, **eFuse-locked on S3** (works on S4, ~800 MHz, RVV 0.7.1) | **E906, RV32IMAFC, 200 MHz** | an MCU-class core that is *not* locked; **less** capable than the S4's C906 |
+| DSP | HiFi4 | HiFi4 | same |
+
+### 3.2 The board
+
+| | T113 boards (MQ-Dual / your REV5) | Avaota-A1 v1.7 |
+|---|---|---|
+| Storage | SD, SPI NOR/NAND, eMMC (REV5) | eMMC (32 GB retail), **SPI NAND W25N01GV**, microSD |
+| USB | USB-C OTG + 1 USB-A | USB-C OTG (**debug UART on the SBU pins**), **USB 3.0 Type-A** + USB 2.0 Type-A (stacked) |
+| **PCIe** | — | **none.** The USB3/PCIe combo is wired to the USB3 port (schematic sheet 8; the PCIe refclk is unconnected) |
+| Network | RTL8723BS Wi-Fi (mainline staging) | **2× RTL8211F GbE**; **AIC8800D** Wi-Fi 6 / BT 5.4 (SDIO + UART), with **no mainline driver** |
+| Display | DSI 7", SPI panels | HDMI, DP (from eDP), LVDS/MIPI connector, 50-pin RGB FPC, 1.14" SPI TFT (ST7789V) |
+| Camera | DVP | 4-lane MIPI CSI connector |
+| CAN | CAN0 fitted (REV5) | **TJA1051T transceiver fitted** |
+| Power | USB-C 5 V | **12 V DC barrel** (TPS54531 buck), AXP717 + AXP323 PMICs, fan header |
+| Debug | microSD JTAG, CH347F | microSD JTAG (same pins), PB JTAG on the FPC, E906/HiFi4 JTAG on the 40-pin header (1.2) |
+| Recovery | FEL | FEL button |
+
+### 3.3 Mainline Linux and boot chain, side by side
+
+| | T113 (your 6.18 / 7.3-rc work) | Avaota-A1 (torvalds master, read 2026-10-28) |
+|---|---|---|
+| Boot chain | BROM → U-Boot SPL (open DRAM init) → U-Boot → Linux in Hyp; PSCI from U-Boot (ARMv7) | BROM → U-Boot SPL (open DRAM init, 2025) → **TF-A BL31** → U-Boot → Linux. **Upstream TF-A has no sun55i platform** (`plat/allwinner` has a64, h6, h616, a133, r329 only), even though U-Boot's sunxi docs require BL31 on 64-bit SoCs. Find out which BL31 Avaota/Armbian images use. |
+| **Enabled in the board DT** | most of the SoC (your camera, G2D, DSI, VE, audio, CAN, crypto…) | UART0, MMC0/2, SPI NAND, USB 2.0 (OTG + EHCI/OHCI), **GMAC0 + GMAC1**, **Mali GPU**, LEDs, IR, RTC, AXP717/AXP323, pinctrl |
+| **Missing in mainline** | cpufreq, suspend-to-RAM, PWM, Falcon from NOR; thermal from 7.0, watchdog enable from 7.2 (your report) | **thermal** (posted 2025, not in master), **cpufreq/OPP**, **display** (DE/TCON/HDMI/DSI/eDP/LVDS), **camera/ISP**, **video engine**, **USB3**, **CAN**, **PWM**, **audio codec**, **CoreSight**, Wi-Fi, the NPU on this board (node exists, not enabled) |
+| PREEMPT_RT | 32-bit ARM needs v7.1 (`ARCH_SUPPORTS_RT`) | **arm64 has had it since 6.12** |
+| Virtualisation | **none** (KVM for 32-bit ARM was removed from Linux in 5.7) | **KVM on arm64** with GICv3: VMs, containers |
+| Same-SoC boards in mainline | — | Orange Pi 4A (T527), Radxa Cubie A5E (A527), X96Q Pro+ (H728) |
+
+### 3.4 Trace: does the T527 trace like the i.MX95?
+
+**On paper, partly. Not proven.**
+
+- The T527 UM says every A55 has an **ETM** and that the CPU subsystem includes CoreSight SoC-600 and a timestamp module. That is the *source* side.
+- The manual documents **no trace sink**: no ETF/ETB, no ETR, no TPIU, no funnel or ROM-table addresses.
+- Mainline has no CoreSight nodes for the A523 family.
+- Without an on-chip sink, the ETM is useless on this board, because there is no trace port on the pins either.
+
+**How to find out** (the method you used on the i.MX95):
+
+1. Attach over microSD JTAG.
+2. Run `dap info` and walk the ROM table.
+3. Look for TMC components (ETF/ETR) and funnels.
+
+Two caveats:
+
+- The DAP may be ADIv6 (SoC-600), so try `dap create … -adiv6` if ADIv5 fails.
+- The mainline T527 DT has no CoreSight nodes, so even if a sink exists, trace would start from the debugger, as on your i.MX95.
+
+**Trace on boards you own or are considering, in this price class:**
+
+| Board | Price | ETM | On-chip sink | Status |
+|---|---|---|---|---|
+| T113-S3 (elb1) | ~$11 per chip | **no** | — | measured: no instruction trace (your doc 80) |
+| **Avaota-A1** (T527) | $54.95 | yes (UM) | **not documented** | `[?]` walk the ROM table; Orange Pi 4A and Cubie A5E have the same silicon |
+| **FRDM-IMX93** | ~$71–74 | A55 | SEGGER: "on-chip tracing via trace buffer… requires additional init steps" | likely; not tried |
+| FRDM-IMX95 Pro | ~$300 | yes | ETF 16 KB + ETR to DRAM, no TPIU | **proven by you**: 1.58 GiB in 8 s, six cores |
+
+If instruction trace is what you want at this price, **the FRDM-IMX93 you already own is the safer bet**. On the Avaota it is an experiment worth one evening of ROM-table walking.
+
+### 3.5 What the Avaota adds for an embedded Linux BSP engineer
+
+1. **arm64 platform work.**
+   - EL3/EL2/EL1, TF-A BL31 and PSCI (CPU on/off, idle, suspend), GICv3, 4-level page tables.
+   - Your A7 OS course can grow an AArch64 track. The A55 also runs AArch32, so the A7 labs can be compared on the same chip.
+2. **A live upstream target**, the same way the T113 was for you, but with bigger gaps:
+   - thermal + cpufreq (DVFS with two clusters, energy-aware scheduling);
+   - a TF-A port;
+   - USB3, CAN, PWM, the audio codec;
+   - the display pipeline (an out-of-tree HDMI port exists for the Orange Pi 4A);
+   - MIPI CSI/ISP and the 4K video engine.
+
+   Pick small, board-testable pieces first, like you did on the T113. Some are already posted by others (thermal), so check lore before starting.
+3. **A realistic product class.** 4 GB RAM, 2× GbE, USB3, a GPU, an NPU, and 4K video are what industrial gateways and HMIs ship with, unlike 128 MB.
+4. **LPDDR4 bring-up** with open SPL code and FEL (section 2).
+5. **MIPI CSI-2 + ISP on cheap hardware.** This matches your camera-AI roadmap on the i.MX95, at a fifth of the price, once the driver side exists.
+
+### 3.6 What the T113 still does better
+
+- **Mainline multimedia today:** your CSIC driver, G2D, Cedrus, DSI and audio work. On the Avaota, display, camera and VE all still need the vendor BSP.
+- **RISC-V:** the S4's C906 (RV64, vector, ~800 MHz) beats the T527's 200 MHz RV32 E906 for your C906 labs.
+- **Small and cheap:** in-package DRAM, USB-C power, a ~$11 chip. It is the right base for a sold learning board (elb1); the Avaota is the step up.
+- **Proven tooling:** the T113 has JTAG, OpenOCD target, `jtag-fel.sh`, measured numbers and 80+ field docs. The Avaota starts from zero, apart from section 1.
+
+---
+
+## 4. Sources
 
 Local (this repo):
 
@@ -954,6 +1075,7 @@ Upstream:
 - ST: [STM32MP135F-DK](https://www.st.com/en/evaluation-tools/stm32mp135f-dk.html), [RS Italy price](https://it.rs-online.com/web/p/strumenti-di-sviluppo-per-microcontrollori/2615098), [U-Boot SPL DDR interactive mode](https://wiki.st.com/stm32mpu-ecosystem-v3/wiki/U-Boot_SPL:_DDR_interactive_mode), [DDRCTRL/DDRPHYC DT configuration](https://wiki.st.com/stm32mpu/wiki/DDRCTRL_and_DDRPHYC_device_tree_configuration)
 - Jobs: [AMD Memory PHY FW (Austin)](https://www.jobleads.com/us/job/memory-phy-firmware-engineer-ddr-lpddr--austin--eca55330dc134d678816ab0f2c8394cc3), [AMD DDR/LPDDR FW (Bengaluru)](https://www.electronicsforu.com/career/firmware-engineer-ddr-lpddr-amd-bengaluru), [Intel DDR PHY FW](https://intel.wd1.myworkdayjobs.com/External/job/Mexico-Guadalajara/DDR-PHY-Firmware-Engineer_JR0285805), [Cadence principal FW](https://cadence.wd1.myworkdayjobs.com/en-US/External_Careers/job/Principal-Firmware-Engineer_R53293), [Astera Labs DDR FW lead](https://theorg.com/org/astera-labs/jobs/tech-lead-firmware-engine-89478810), [Qualcomm DDR PHY system design](https://bebee.com/us/jobs/ddr-phy-system-design-engineer-san-diego-us-qualcomm-san-diego-ca--t7xk-793302983), [ZipRecruiter DDR PHY engineer](https://www.ziprecruiter.com/Jobs/Ddr-Phy-Engineer), [memory market 2026 overview](https://intuitionlabs.ai/articles/hbm-dram-ai-memory-demand)
 - FRDM-IMX93 debug and DDR: [2.docs/jlink-imx93](2.docs/jlink-imx93) (NXP community post, saved), [FRDM-IMX93 user manual UM12181](https://mouser.com/pdfDocs/FRDM-IMX93_UM.pdf), U-Boot [ddrphy_train.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_train.c), [ddrphy_utils.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/phy/ddrphy_utils.c), [imx9 ddr_init.c](https://github.com/u-boot/u-boot/blob/master/drivers/ddr/imx/imx9/ddr_init.c), [imx93_frdm board](https://github.com/u-boot/u-boot/tree/master/board/nxp/imx93_frdm), TF-A Synopsys PhyInit for STM32MP2: [CSR names](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/phyinit/include/ddrphy_csr_all_cdefines.h), [LPDDR4 message block](https://github.com/ARM-software/arm-trusted-firmware/blob/master/drivers/st/ddr/phy/firmware/include/mnpmusrammsgblock_lpddr4.h)
+- Avaota vs T113 (section 3): mainline [sun55i-a523.dtsi](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/allwinner/sun55i-a523.dtsi), [sun55i-t527-avaota-a1.dts](https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts) and [its history](https://github.com/torvalds/linux/commits/master/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts); TF-A [plat/allwinner](https://github.com/ARM-software/arm-trusted-firmware/tree/master/plat/allwinner); U-Boot [sunxi.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/allwinner/sunxi.rst); [A523 thermal series (2025)](https://lkml.iu.edu/hypermail/linux/kernel/2504.1/08971.html), [A523 NPU node](https://lists.infradead.org/pipermail/linux-arm-kernel/2025-September/1061789.html), [A523 Mali enable](https://lists.infradead.org/pipermail/linux-arm-kernel/2025-July/1042811.html), [Orange Pi 4A out-of-tree mainline port](https://github.com/ut-slayer/orangepi-4a-mainline); T527 datasheet V0.95 / user manual V0.94 (§2.2 CPUX, CoreSight, timestamp) in `2.docs`; schematic v1.7 sheets 1, 8, 10–13 and BOM v1.7; T113 side from `~/1.project/elb1/8.new3-repo/elb1-t113/README.md`, field docs 07, 80 and `4.docs/reports/Embedded Linux industry requirements.md`
 - T113-S3 and RZ/V2L: U-Boot [dram_sun20i_d1.c](https://github.com/u-boot/u-boot/blob/master/drivers/ram/sunxi/dram_sun20i_d1.c), [mangopi_mq_r_defconfig](https://github.com/u-boot/u-boot/blob/master/configs/mangopi_mq_r_defconfig), [awboot](https://github.com/szemzoa/awboot); Renesas TF-A [plat/renesas/rz/common/drivers/ddr/ddr.c](https://github.com/renesas-rz/rzg_trusted-firmware-a/blob/v2.3/rzg2l/plat/renesas/rz/common/drivers/ddr/ddr.c), [RZ/V2L DDR params](https://github.com/renesas-rz/rzg_trusted-firmware-a/tree/v2.3/rzg2l/plat/renesas/rz/soc/v2l/drivers/ddr), [RZ/V2L product page](https://www.renesas.com/us/en/products/microcontrollers-microprocessors/rz-mpus/rzv2l-general-purpose-microprocessor-equipped-renesas-original-ai-dedicated-accelerator-drp-ai-12ghz-dual), [SolidRun RZ/G2L·V2L SOM manual](https://solidrun.atlassian.net/wiki/spaces/developer/pages/511148033/RZ+G2L+and+RZ+V2L+SOM+Hardware+User+Manual), [Zephyr RZ/V2L SMARC (boot switches)](https://docs.zephyrproject.org/latest/boards/renesas/rzv2l_smarc/doc/index.html), [SMARC EVK RZ/V2L Linux start guide](https://www.renesas.com/en/document/gde/smarc-evk-rzv2l-linux-start-guide-rev104), OpenOCD [renesas_rz.cfg](https://github.com/openocd-org/openocd/blob/master/tcl/target/renesas_rz.cfg)
 - i.MX93 vs i.MX95 DDR internals: U-Boot [imx93-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx93-u-boot.dtsi), [imx95-u-boot.dtsi](https://github.com/u-boot/u-boot/blob/master/arch/arm/dts/imx95-u-boot.dtsi), [imx95_evk.rst](https://github.com/u-boot/u-boot/blob/master/doc/board/nxp/imx95_evk.rst), [arch-imx9/ddr.h](https://github.com/u-boot/u-boot/blob/master/arch/arm/include/asm/arch-imx9/ddr.h); imx-oei [oei/ddr](https://github.com/nxp-imx/imx-oei/tree/master/oei/ddr) (`ddrphy_train.c`, `ddrphy_utils.c`, `helper.c`, `ddr.h`, `msb_ddr4x.h`, `msb_ddr5.h`, `ddrphy_qb.c`), [mx95lp5 timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp5/ddr), [mx95lp4x timing](https://github.com/nxp-imx/imx-oei/tree/master/boards/mx95lp4x/ddr); QuickBoot: [U-Boot QuickBoot doc](https://concept-docs.readthedocs.io/en/latest/board/nxp/quickboot.html), [U-Boot patch series](https://lists.denx.de/pipermail/u-boot/2026-May/620233.html), [NXP community: i.MX95 DDR QuickBoot](https://community.nxp.com/t5/i-MX-Processors/i-MX95-DDR-Quick-Boot-Questions-on-Optimal-Training-Conditions/m-p/2179922); i.MX95 RM ch. 114 (local, `~/praxis/imx/rm`)
 - i.MX93 memory: [i.MX 93 Memory Compatibility Guide](https://community.nxp.com/t5/i-MX-Processors-Knowledge-Base/i-MX-93-Memory-Compatibility-Guide/ta-p/1725656), [Micron memory support for NXP (chart)](https://assets.micron.com/adobe/assets/urn:aaid:aem:09a7fea5-83ad-4f34-be20-136408496e91/renditions/original/as/nxp-compatibility-chart.pdf), [AN14012](https://nxp.com/docs/en/application-note/AN14012.pdf), [i.MX 93 product page](https://nxp.com/imx93), [MT53E1G16D1FW-046 AAT:A (DigiKey)](https://www.digikey.at/en/products/detail/micron-technology-inc/MT53E1G16D1FW-046-AAT-A/17632190), [i.MX 95 industrial datasheet](https://www.nxp.com/docs/en/data-sheet/IMX95IEC.pdf), [FRDM-IMX95 Pro LPDDR5-6400 (CNX)](https://www.cnx-software.com/2026/08/11/nxp-frdm-imx95-pro-i-mx-95-board-features-10gbe-faster-6400-mt-s-lpddr5-memory-dual-m-2-expansion/)
