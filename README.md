@@ -31,6 +31,7 @@ Repo layout:
 
 - [1.hardware/Avaota-A1](1.hardware/Avaota-A1): YuzukiHD open hardware. Contains schematics v1.2–v1.7, BOM, Gerbers, Altium/EasyEDA projects, LPDDR4 layout templates (`resource/dram_4l`, `resource/dram_8l`) and IBIS models.
 - [2.docs/docs](2.docs/docs): Allwinner documentation: A523/A527/T527/A733/T736 manuals, hardware design guides and SDK guides.
+- [4.a733-ddr](4.a733-ddr/README.md): A733 DRAM training, taken apart from Allwinner's own public binaries. It's the same Synopsys LPDDR5 PHY as the i.MX95. Covers the vendor save/restore of trained values, the standby retention list, crash-dump-to-FEL, and tools to step and snapshot training over JTAG or UART.
 - [3.a733-android-farm](3.a733-android-farm/README.md): side project. Runs redroid (Android in Docker) on A733 boards (Orange Pi Zero 3W / Zero 4) with the PowerVR GPU. It has build scripts for the binder-enabled host kernel and for the Android-flavour GPU driver, plus static checks of the driver/blob pairing. Its sources and build outputs are re-fetched or rebuilt by its scripts and are not committed.
 
 ---
@@ -1212,11 +1213,29 @@ The cost of the Zero 4 is a vendor-BSP-only platform for a long time. Pick its *
 
   The GPIO numbers for CMD and DAT0 are swapped compared with the T527 (where PF1 = DAT0 and PF3 = CMD), but the **same sniffer wiring and CH347F** work.
 - **The register moved.** In FEL, first check `xfel read32 0x02000300`; the boot ROM may already mux JTAG. Otherwise run `xfel write32 0x02000300 0x0f3f3f33`. Do **not** reuse the T527 address `0x020000F0`.
-- **The PB route exists too** (PB0–PB3, function 7 per the pin table `[?]`), plus `JTAG-SEL` on ball W2. S-JTAG is on PL4–PL7 / PM0–PM2.
+- **The PB route (confirmed 2026-10-28).** Use function 7:
+
+  | Pin | Signal |
+  |---|---|
+  | PB0 | JTAG-MS (TMS) |
+  | PB1 | JTAG-CK (TCK) |
+  | PB2 | JTAG-DO (TDO) |
+  | PB3 | JTAG-DI (TDI) |
+
+  - Sources: A733 datasheet V1.01 pin table, and the `jtag_gpio` field of every Orange Pi sun60iw2 boot0 header.
+  - `PB_CFG0` is at `0x02000100` (GPIO banks start at 0x80 with a 0x80 stride).
+  - boot0 itself routes these pins to JTAG when the header's `enable_jtag` word (offset `0xCC`) is 1. Orange Pi's generic `boot0_sdcard.fex` already has it set. That gives JTAG during DRAM training while the board boots from SD; see [4.a733-ddr](4.a733-ddr/README.md).
+  - On the Zero 3W/Zero 4 these pins are UART2 (PB0/PB1) and I2C0 (PB2/PB3), probably on the 40-pin header `[?]`.
+  - The CPUS (S-JTAG) is on PL4–PL7, and the RISC-V ARISC's own JTAG (S-RJTAG) is on PM0/PM1. `JTAG-SEL` is ball W2.
+- **The DAPs (from SyterKit's `scripts/openocd/allwinner_a733.cfg`):**
+  - two TAPs, big cluster IDCODE `0x5ba00477` and little cluster `0x2ba06477`;
+  - both **ADIv6** (CoreSight-600);
+  - each has an APB-AP (`0x1000`) and an **AHB-AP (`0x2000`)** for system-bus reads without halting a core.
+  - Core debug bases are `0x09010000` + core × `0x100000`.
+  - You need OpenOCD master: it has both the CH347 driver and ADIv6 support.
 - **Unverified on the Zero 4:**
   - that its microSD is wired to SDC0 (normal for Allwinner);
   - how FEL is entered (the board has "BOOT" through-holes, no button);
-  - the DAP type (CoreSight-600: try `-adiv6` if ADIv5 fails);
   - whether any trace sink exists.
 
 **eMMC and UFS: good teaching, in two very different sizes.**

@@ -5,3 +5,7 @@
 # build outputs contain vendor GPU blobs (do not publish)
 3.a733-android-farm/src/
 3.a733-android-farm/out/
+
+# A733 DDR study: vendor binaries and generated output (scripts/00-fetch.sh)
+4.a733-ddr/src/
+4.a733-ddr/out/
