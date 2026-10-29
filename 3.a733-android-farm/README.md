@@ -82,7 +82,9 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── pvrsrvkm-android-sunxi-secure-config.patch GPU secure-reset fix (section 4)
 │   ├── vendor_redroid-gpu_config-pvr.patch        PowerVR case for source-built redroid
 │   ├── redroid-13-gpu_config.orig.sh              redroid's own GPU script (overlay fallback)
-│   └── headers-debian-byteshift.patch             needed by Orange Pi's builddeb
+│   ├── headers-debian-byteshift.patch             needed by Orange Pi's builddeb
+│   ├── mesa-android-aarch64-api33.ini             Meson cross file, NDK r29, API 33 (Route M)
+│   └── mesa-pvr-accept-apercel-drm-name.patch     Mesa binds to `powervr` and `apercel` DRM names
 ├── scripts/
 │   ├── env.sh                           toolchain + paths
 │   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw apercel)
@@ -90,11 +92,13 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 15-package-kernel-deb.sh         -> linux-image/dtb/headers .deb
 │   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch; SECURE_CONFIG=0 = fallback without it)
 │   ├── 22-build-apercel.sh              open host GPU driver apercel + 3 DRM helper modules -> out/apercel/
+│   ├── 23-build-mesa-android.sh         Route M: Mesa 26.3 PowerVR + Zink for redroid 13 arm64 (VARIANT=apercel)
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
 │   ├── redroid_link_check.py            (used by 26)
 │   ├── 30-make-redroid-pvr-context.sh   overlay image context (stock redroid + blobs)
 │   ├── 31-make-aosp-vendor-tree.sh      vendor/powervr-a733 for SOURCE-built redroid
+│   ├── 32-make-redroid-mesa-context.sh  Route M overlay image context + link check vs redroid 13
 │   ├── 35-test-on-redroid-host.sh       RUN ON YOUR OTHER REDROID PC
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
 │   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
@@ -685,7 +689,7 @@ How redroid 13 does host-GPU mode today (image `13.0.0_64only-240527`, checked i
 - **Gap found:** the branch base (2026-09-23) predates PowerVR transform feedback (`b61ae0073c1`, 2026-10-13, in 26.3.0-rc2; checked with `git merge-base`). So BayLibre's Mesa gives Zink no GLES 3.x path. For apps we need their Android commits rebased onto 26.3: `583ce30933e` (Android WSI/AHB for PowerVR), `20d03946484` (kopper on Android), `d14b83e8e97` (Zink device fallback), `b6ff534c8f2` (gralloc stride of imported AHB), `9a0a0d882fd`/`842812d75af` (BO cache; without it SuperTuxKart ran at about 6 fps on the K3), `75ddecf21aa` (conformant flag), plus the image/format fixes. If the host driver is apercel, add the driver-name change from CheezeCS's 26.3 patch.
 - For Android 13 (API 33): `-Dplatform-sdk-version=33`, NDK `aarch64-linux-android33-clang`. IMapper5 needs SDK ≥ 35, so on 13 Mesa uses mapper4 (vendor build) or the `android-stub` path (gralloc via cros_api/libdrm/fallback, which is what redroid's gbm_gralloc offers). BayLibre's vndk-v35 stubs may expose symbols Android 13 lacks: link against stubs from the redroid-13 image instead (untested).
 
-**Route M work list, in order** (none of it needs the board until step 4):
+**Route M work list, in order** (none of it needs the board until step 4; steps 1–3 done 2026-10-29, section 16.13):
 1. Host build of Mesa 26.3 tools, then the rebased BayLibre branch for Android arm64 / API 33, on the build PC.
 2. Overlay image on `redroid/redroid:13.0.0_64only-240527` with the Mesa files listed above and a `powervr`/`apercel` case in `gpu_config.sh`.
 3. Static checks like scripts 25/26: every `NEEDED` library resolvable in the `sphal` namespace.
@@ -724,3 +728,43 @@ A GitHub search for A733 GPU projects found several more boards and stacks besid
 4. **GPU clock in Route A:** our Android DDK build has `SUPPORT_LINUX_DVFS`, so `sunxi_get_opp()` sets the start clock to the top OPP (1008 MHz) instead of the 600 MHz default that the Linux DKMS build falls back to. Check `dmesg` for `change default clk_rate to max opp freq`.
 5. **DSU at 780 MHz is a farm bottleneck to test later.** The vendor kernel has no DSU frequency driver. The overlay that raises it to 1027 MHz gave +38% DRAM read in their tests. Two Android instances are memory-bound, so measure it once the farm runs, with stability tests.
 6. **A second open driver for Route M:** `bobyshamen-arch/pvr-a733` is newer upstream code (7.3-rc6) and keeps the `powervr` DRM name, so stock Mesa plus BayLibre's Android commits would need no driver-name patch. Compare it with apercel (more backported fixes, proven on the Zero 3W) before choosing.
+
+### 16.13 Route M userspace built: Mesa 26.3 PowerVR + Zink for redroid 13 (2026-10-29)
+
+Steps 1–3 of the Route M work list (section 16.11) are done on this PC. Steps 4–5 need the board.
+
+**What was built** (`scripts/23-build-mesa-android.sh`, about 8 GB under `out/` and `src/`):
+- **Source:** upstream Mesa `26.3` branch at `07f74f00104` (26.3.0-rc2+89, 2026-10-27). On top of it, BayLibre's 34 `android-17-pvr-support` commits are cherry-picked (`92f67484720`; only the riscv64 cross-file tweak `992647d02ea` is skipped).
+  - One conflict: the PowerVR extension list. It is resolved with `-X ours` for that commit, because 26.3 already lists `EXT_image_drm_format_modifier`. The script reproduces the exact same tree (checked in a separate worktree).
+  - Plus `config/mesa-pvr-accept-apercel-drm-name.patch`. Mesa binds to both DRM names, `powervr` (Route L, mainline-based drivers) and `apercel`, and the pipe loader maps both to Zink. Upstream already did that mapping for `powervr`.
+  - The patch is labelled `Generated-by: LLM` and left uncommitted in the Mesa tree, as Mesa's `AGENTS.md` asks.
+- **Toolchains:**
+  - Host tools (`mesa_clc`, `vtn_bindgen2`, `pco_clc`, `pdsc_precomp`) come from a conda-forge env with LLVM/clang 19.1.7, SPIRV-LLVM-Translator 19.1.13, SPIRV-Tools 2026.4 and meson 1.12.1 (`micromamba`, `out/toolchains/mesa-host`). Ubuntu 22.04 only has LLVM 14, and Mesa's CLC needs ≥ 15.
+  - Target: NDK r29 (SHA-1 `87e2bb7e…` checked against Google's repository XML), `aarch64-linux-android33`, with BayLibre's vndk stubs.
+  - Cross file: `config/mesa-android-aarch64-api33.ini` (BayLibre's arm64 file with API 33).
+- **Options:**
+  - Drivers and APIs: `-Dplatforms=android -Dplatform-sdk-version=33 -Dvulkan-drivers=imagination -Dgallium-drivers=zink -Dgbm=enabled -Degl=enabled -Dllvm=disabled`.
+  - Host tools and libdrm: `-Dmesa-clc=system -Dprecomp-compiler=system -Dallow-fallback-for=libdrm,perfetto`.
+  - Android: `-Dandroid-stub=false -Dandroid-strict=true -Dgbm-backends-path=/vendor/lib64/gbm`.
+- **Two variants:**
+  - `base`: as above.
+  - `VARIANT=apercel`: also CheezeCS's `apercel-mesa-26.3.0-rc2.patch` (Vulkan 1.3 features and limits, pco compiler changes, load-op caches). That combination gave GLES 3.1 through Zink on a Zero 3W. It is applied in its own worktree `src/mesa-apercel`, with its own host tools, because the patch changes the pco compiler. Apercel's duplicate conformance case is dropped, and its driver rename is replaced by the accept-both patch.
+
+**Checks done without a board:**
+- **Contents.** `vulkan.mesa.so` exports `HMI` (the Android Vulkan HAL entry) and carries `VK_ANDROID_native_buffer`, `vkGetAndroidHardwareBufferPropertiesANDROID`, `vkGetSwapchainGrallocUsage2ANDROID` and `VK_EXT_transform_feedback`. 36.56.104.183 is in the conformance list, so no `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER`. Both DRM names are compiled in. `libgallium_dri.so` contains Zink. The version string is `Mesa 26.3.0-rc2 (git-e5f982d0e2)`.
+- **Linking against redroid 13.** `scripts/32-make-redroid-mesa-context.sh` packages the overlay and runs the same namespace-aware link check as script 26 against the stock `redroid/redroid:13.0.0_64only-240527` image.
+  - Covered: `libEGL_mesa.so`, `libGLESv1_CM_mesa.so`, `libGLESv2_mesa.so`, `vulkan.mesa.so` and `dri_gbm.so`, plus redroid's own `gralloc.gbm.so` on our `libgbm.so.1`.
+  - **0 problems in both variants.** Every `DT_NEEDED` resolves inside the sphal namespace (LLNDK, VNDK-SP, `/vendor/lib64`), and 261–458 imports per entry point resolve with matching symbol versions. That includes `libc++.so` from Android 13's VNDK-SP and mapper@4.0.
+  - Two fixes were needed to get there. redroid ships `libdrm.so.2` (Mesa's own 2.4.120), not AOSP's `libdrm.so`, so every library's `NEEDED libdrm.so` is rewritten with `patchelf`. And `libgbm` is renamed to `libgbm.so.1`, the name gbm_gralloc needs.
+
+**The overlay** (`out/redroid-mesa/`, 30 MB; `out/redroid-mesa-apercel/` for the variant) uses the same file names as redroid's own host-GPU Mesa, so redroid's gbm_gralloc and fake composer stay:
+- `vendor/lib64/egl/lib{EGL,GLESv1_CM,GLESv2}_mesa.so`
+- `vendor/lib64/libgallium_dri.so`
+- `vendor/lib64/libgbm.so.1`
+- `vendor/lib64/gbm/dri_gbm.so`
+- `vendor/lib64/hw/vulkan.mesa.so`
+- `vendor/bin/gpu_config.sh`: a `powervr`/`apercel` case that sets `ro.hardware.egl=mesa`, `ro.hardware.gralloc=gbm`, `ro.hardware.vulkan=mesa`, `gralloc.gbm.device=/dev/dri/renderD<n>` and `vendor.mesa.loader.driver.override=zink`. Otherwise it falls back to redroid's script, kept as `gpu_config.orig.sh`.
+- `vendor/etc/init/redroid.common.rc` with `ro.opengles.version` lowered from 3.2 to 3.0 (Zink gives at most 3.1).
+- The Dockerfile is COPY-only. Build it on the board with `docker build -t redroid-mesa:13 out/redroid-mesa`. Mesa 26 reads `vendor.mesa.*` properties with keys up to 128 characters, so the property route works for Mesa options.
+
+**Not known until the board runs it:** whether the PowerVR Android WSI works inside redroid with gbm_gralloc buffers (BayLibre ran it with minigbm `gbm_mesa`); Zink's GLES level with each variant; SurfaceFlinger on Zink GLES (Android 13 RenderEngine has no Vulkan path); and performance. BOARD-DAY step 8 is the first try.

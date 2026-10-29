@@ -1,0 +1,56 @@
+Generated-by: LLM
+
+diff --git a/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c b/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+index dc631b4c86d..23460bc1938 100644
+--- a/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
++++ b/src/gallium/auxiliary/pipe-loader/pipe_loader_drm.c
+@@ -151,7 +151,8 @@ pipe_loader_drm_probe_fd_nodup(struct pipe_loader_device **dev, int fd, bool zin
+    }
+ 
+    /* powervr has no Gallium driver and relies on Zink */
+-   if (strcmp(ddev->base.driver_name, "powervr") == 0) {
++   if (strcmp(ddev->base.driver_name, "powervr") == 0 ||
++       strcmp(ddev->base.driver_name, "apercel") == 0) {
+       FREE(ddev->base.driver_name);
+       ddev->base.driver_name = strdup("zink");
+    }
+diff --git a/src/imagination/vulkan/pvr_instance.c b/src/imagination/vulkan/pvr_instance.c
+index da1f495bfdd..557951e3129 100644
+--- a/src/imagination/vulkan/pvr_instance.c
++++ b/src/imagination/vulkan/pvr_instance.c
+@@ -109,7 +109,8 @@ pvr_drm_device_is_compatible(drmDevicePtr drm_dev)
+       return false;
+    }
+ 
+-   is_pvr = !strcmp(version->name, PVR_DRM_DRIVER_NAME);
++   is_pvr = !strcmp(version->name, PVR_DRM_DRIVER_NAME) ||
++            !strcmp(version->name, PVR_DRM_DRIVER_NAME_APERCEL);
+ 
+ #if defined(PVR_SUPPORT_SERVICES_DRIVER)
+    is_pvr |= !strcmp(version->name, PVR_SRV_DRIVER_NAME);
+diff --git a/src/imagination/vulkan/winsys/pvr_winsys.c b/src/imagination/vulkan/winsys/pvr_winsys.c
+index 64c5c76b175..2e14f5ce4e6 100644
+--- a/src/imagination/vulkan/winsys/pvr_winsys.c
++++ b/src/imagination/vulkan/winsys/pvr_winsys.c
+@@ -95,7 +95,8 @@ VkResult pvr_winsys_create(const char *render_path,
+       goto err_close_display_fd;
+    }
+ 
+-   if (strcmp(version->name, PVR_DRM_DRIVER_NAME) == 0) {
++   if (strcmp(version->name, PVR_DRM_DRIVER_NAME) == 0 ||
++       strcmp(version->name, PVR_DRM_DRIVER_NAME_APERCEL) == 0) {
+       result = pvr_drm_winsys_create(render_fd, display_fd, alloc, ws_out);
+ #if defined(PVR_SUPPORT_SERVICES_DRIVER)
+    } else if (strcmp(version->name, PVR_SRV_DRIVER_NAME) == 0) {
+diff --git a/src/imagination/vulkan/winsys/pvr_winsys.h b/src/imagination/vulkan/winsys/pvr_winsys.h
+index 90b229244c6..c6f8cfaef1d 100644
+--- a/src/imagination/vulkan/winsys/pvr_winsys.h
++++ b/src/imagination/vulkan/winsys/pvr_winsys.h
+@@ -44,6 +44,7 @@
+ #include "vk_sync_timeline.h"
+ 
+ #define PVR_DRM_DRIVER_NAME "powervr"
++#define PVR_DRM_DRIVER_NAME_APERCEL "apercel"
+ #define PVR_SRV_DRIVER_NAME "pvr"
+ 
+ struct pvr_device_info;

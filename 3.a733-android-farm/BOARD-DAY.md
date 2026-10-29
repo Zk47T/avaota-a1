@@ -51,7 +51,9 @@ Only the board can decide:
    sha256sum out/fw/*/rogue_36.56.104.183_v1.fw   # 1.0: 3974e79f…  1.1: 1db1c399…
    ./scripts/00-fetch-sources.sh apercel && ./scripts/22-build-apercel.sh   # -> out/apercel/ (4 modules + SHA256SUMS)
    SECURE_CONFIG=0 ./scripts/20-build-pvrsrvkm-android.sh                   # -> out/deploy/lib/modules/pvrsrvkm-android-nosecure.ko (Route A fallback)
-   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
+   ./scripts/23-build-mesa-android.sh && ./scripts/32-make-redroid-mesa-context.sh            # -> out/redroid-mesa/ (Route M, step 8)
+   VARIANT=apercel ./scripts/23-build-mesa-android.sh && VARIANT=apercel ./scripts/32-make-redroid-mesa-context.sh
+   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-mesa out/redroid-mesa-apercel out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
 4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run:
@@ -81,6 +83,21 @@ Only the board can decide:
 6. **Read the report.** `./50-board-report.sh`. Each line is PASS, WARN or FAIL. The evidence (dmesg, logcat, SurfaceFlinger dump, props) is saved under `~/farm/reports/<time>/`.
 7. **Look from the laptop.** `adb connect <ip>:5555` and `adb connect <ip>:5556`, then `adb -s <ip>:5555 shell getprop ro.hardware.egl` and `adb exec-out screencap -p > s1.png`. Keep the serial console attached: with the vendor Linux DDK, a CPU screen grab while the GPU renders can deadlock the kernel (README 16.12). Take one screenshot on an idle screen first, then one while an app animates, and note if the board stops answering.
    - Route A's GPU clock: `dmesg | grep -i 'clk_rate'` should show `change default clk_rate to max opp freq:1008000000`.
+
+8. **Optional, separate boot: Route M, the open stack inside redroid** (README 16.13). It needs apercel on the host instead of `pvrsrvkm`, so keep `pvrsrvkm` from loading at boot, then undo that afterwards:
+   - Before rebooting: `sudo mv /etc/modules-load.d/pvrsrvkm.conf ~/farm/ && echo 'blacklist pvrsrvkm' | sudo tee /etc/modprobe.d/farm-route-m.conf && sudo reboot`. After boot, `lsmod | grep pvrsrvkm` must be empty.
+   - Host driver: load apercel with fw 1.1 exactly as in step 4a.
+   - Image: `cd ~/farm/redroid-mesa && sudo docker build -t redroid-mesa:13 .`. For the variant with CheezeCS's Vulkan 1.3 features, use `~/farm/redroid-mesa-apercel` and tag `redroid-mesa-apercel:13`.
+   - One instance: `sudo docker run -itd --privileged --name android-m -p 5557:5555 redroid-mesa:13 androidboot.redroid_gpu_mode=host androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 androidboot.redroid_fps=30 androidboot.use_memfd=1`.
+   - Check:
+     - `adb connect <ip>:5557`
+     - `adb -s <ip>:5557 logcat -d | grep -i -E 'gpu_config|mesa|zink|pvr|vulkan'`: expect `gpu_config: apercel on renderD128 -> Mesa PowerVR Vulkan + Zink`.
+     - `adb -s <ip>:5557 shell getprop | grep -E 'hardware.(egl|vulkan|gralloc)|mesa'`
+     - `adb -s <ip>:5557 shell dumpsys SurfaceFlinger | grep -i -E 'GLES|zink|PowerVR'`: expect a Zink renderer on the PowerVR device.
+     - `adb -s <ip>:5557 shell cmd gpu vkjson | head -50`: the PowerVR Vulkan device.
+     - `sys.boot_completed`, and a screenshot.
+   - Save: `adb -s <ip>:5557 logcat -d > ~/farm/route-m-logcat.txt`, the `dumpsys SurfaceFlinger` output, and `dmesg | tail -100`.
+   - Undo afterwards: `sudo docker rm -f android-m; sudo rm /etc/modprobe.d/farm-route-m.conf; sudo mv ~/farm/pvrsrvkm.conf /etc/modules-load.d/ && sudo reboot`.
 
 ## 4. How to read the result
 
@@ -131,6 +148,7 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - For Route L: `dmesg | grep -i -E 'powervr|rogue|FW version|deferring|loaded firmware'`, `cat /sys/kernel/debug/dri/*/name`, and the PD 5 and PD 6 `devmem` readbacks.
 - For each driver and firmware tried: `~/farm/apercel-fw1.1.dmesg`, `~/farm/route-l-fw1.0.dmesg` and, if step 4c ran, `~/farm/route-l-fw1.1.dmesg`, plus one line saying which file is installed at the end.
 - The PD 5 and PD 6 readbacks before and after each load (they decide whether an upstream A733 GPU node needs one power domain or two, README 16.10).
+- If step 8 ran: `~/farm/route-m-logcat.txt`, the SurfaceFlinger dump, and which image (base or apercel variant) booted.
 - On a PC with internet, run `python3 -I scripts/60-mainline-watch.py` (README 16.9) and note anything marked `*` or `NEW`. Upstream may have moved since 2026-10-29.
 
 ## 7. Not in scope for this session
