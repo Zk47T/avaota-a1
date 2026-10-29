@@ -343,6 +343,25 @@ Reading:
 - One RK3588 with 16 GB fits 6 instances in RAM, but its 4 A76 cores are tight for 6 software video decoders. That changes only if the Rockchip video decoder (MPP) is wired into the containers.
 - **Plan:** let the Zero 3W board day decide. If Route A or M runs TikTok smoothly on 2 instances, the A733 stays the cheapest per instance. If not, move the farm to RK3588 (2 × 8 GB, or 1 × 16 GB for lighter apps), and keep the A733 as the course and upstream board.
 
+**Update from the user's own RK3588 test (2026-10-29): an RK3588 board tops out at 3 instances.** At 4 the CPU gives out before RAM does. With 3 per board, RK3588 costs at least about 1.6 tr per instance (Orange Pi 5 Pro, if 4.7 tr is the 8 GB price) and up to 2.2 tr (5 Plus 8 GB at 6.6 tr). That loses to **3 A733 boards × 2 instances**, provided the A733 runs 2 instances smoothly (the board-day question).
+
+### 8.3 Which A733 board for the farm; the Zero 2W expansion board does not fit the Zero 3W
+
+**The Zero 2W expansion board is not compatible with the Zero 3W.** Don't plug it in.
+- The Zero 2W's 24-pin "function" FPC carries the H618's two USB 2.0 ports, the H618's **internal** 10/100 Ethernet PHY (analogue pairs straight to the RJ45 magnetics on the hat; there is no PHY chip on the hat), audio, TV-out, IR and buttons.
+- The Zero 3W has no such connector. Its FPC is **PCIe 3.0 x1** (official spec: "1 x PCIe 3.0 1-Lane FPC socket"), and the A733 has no internal Ethernet PHY: its GMAC needs an external PHY, like the YT8531 on the Orange Pi 4 Pro. So the hat's Ethernet cannot work, and mismatched pins could put supply voltage on the PCIe lanes.
+- Wired network options for the Zero 3W:
+  - the **USB-C GbE dongle** already planned (RTL8153, `r8152` module; `45-usb-net.sh`). Two instances need a few Mbit/s each, so USB GbE is plenty.
+  - A **PCIe FPC adapter + PCIe NIC**. The stock Zero 3W DT enables the PCIe root complex (`pcie@6000000`, Gen3 x1) and its combo PHY. But the FPC pinout is not documented as Raspberry Pi 5-compatible (check the Zero 3W schematic before buying a Pi 5 HAT), and our kernel config has `CONFIG_R8169` off; it is a one-line addition to the fragment.
+
+| Per board (6 GB) | Wired network | Other I/O | Size | Official price | Notes |
+|---|---|---|---|---|---|
+| Orange Pi Zero 3W | none: USB-C GbE dongle | 1× USB 3.1 Type-C (DP alt), PCIe FPC | 65 × 32 mm | $60 | the pilot board; LPDDR5 boot0 at 2400 MHz |
+| Orange Pi Zero 4 | GbE RJ45 onboard | — | small | $63 | simplest cabling; not in the local shop |
+| **Orange Pi 4 Pro** | **GbE RJ45 (YT8531), optional PoE module** | 1× USB 3.0 + 3× USB 2.0 host, **M.2 M-key PCIe 3.0 (NVMe)**, eMMC socket | 89 × 56 mm | **$40** | local quote 2.6 tr; Orange Pi's generic boot0 runs its DRAM at **1800 MHz** (section 3 of `4.a733-ddr`), about 25% less memory bandwidth than the Zero 3W's 2400 MHz |
+
+All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.dtb` are all in our tree), images and scripts. For a farm the **4 Pro** is the most practical: Ethernet and PoE onboard, NVMe instead of SD for `/data`, and the cheapest at official prices. Two things to check: whether its DRAM can run faster than 1800 MHz (a job for the DDR study), and the local price against Zero 3W + dongle. The Zero 3W stays the pilot, course and upstream board.
+
 ## 9. On the A733 board
 
 1. Flash the Orange Pi Debian **trixie 1.0.2 server** image (`Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z`; Debian 13.6, kernel 6.6.98-sun60iw2). It has no PowerVR driver; the kit provides it.
