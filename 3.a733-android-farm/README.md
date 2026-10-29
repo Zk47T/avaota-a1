@@ -345,6 +345,22 @@ Reading:
 
 **Update from the user's own RK3588 test (2026-10-29): an RK3588 board tops out at 3 instances.** At 4 the CPU gives out before RAM does. With 3 per board, RK3588 costs at least about 1.6 tr per instance (Orange Pi 5 Pro, if 4.7 tr is the 8 GB price) and up to 2.2 tr (5 Plus 8 GB at 6.6 tr). That loses to **3 A733 boards × 2 instances**, provided the A733 runs 2 instances smoothly (the board-day question).
 
+**CPU per instance, A733 vs RK3588** (units as above; A733 cores from the Zero 3W DT: A76 up to 2002 MHz, `capacity-dmips-mhz` A55 430 / A76 1024):
+
+| Setup | Per instance | Units per instance |
+|---|---|---|
+| A733, 2 instances (section 8.1 layout) | 1 A76 @ 2.0 (dedicated) + 2 A55 + half of a shared A55; host on cpu0 | ≈ 1.95 |
+| A733, 3 instances | about 0.67 A76 + 2 A55 | ≈ 1.4 |
+| RK3588, 3 instances | 1.33 A76 @ 2.4 GHz (≈ 1.6 A733 A76s) + about 1 A55 | ≈ 2.0 |
+| RK3588, 4 instances (fails in the user's test) | 1 A76 @ 2.4 + under 1 A55 | ≈ 1.55 |
+
+So 2 instances on an A733 get about the same CPU each as 3 on an RK3588. The RK3588 at 4 (≈ 1.55) failed, and the A733 at 3 (≈ 1.4) would be worse, so plan **2 per A733**. Per thread the RK3588 is about 20% faster (2.4 vs 2.0 GHz), so its UI and app starts feel a little snappier. The A733 gives each instance its own pinned A76, so instances don't compete for the big core. Memory bandwidth per instance is similar: A733 32-bit LPDDR5-4800 ≈ 19 GB/s for 2; RK3588 64-bit ≈ 34 GB/s for 3.
+
+**Is 1 A76 + 2–3 A55 enough for daily app use?** For TikTok/Instagram-class use at 720×1280, 30 fps: yes, at about the level of a low-end phone; a budget phone such as a Helio G85 (2×A75 + 6×A55) has roughly twice this.
+- Expect smooth feed scrolling and 720p playback. Software H.264 decoding takes about 0.3–0.5 of the A76.
+- Expect slow first app starts (dex2oat compiles once), and some stutter when both instances do heavy work at the same time (shared memory bus and spare A55).
+- Not enough for heavy 3D games or high-bitrate 1080p60 video in software. Giving the containers the Cedar video engine (section 8.1) removes the biggest CPU cost.
+
 ### 8.3 Which A733 board for the farm; the Zero 2W expansion board does not fit the Zero 3W
 
 **The Zero 2W expansion board is not compatible with the Zero 3W.** Don't plug it in.
@@ -449,6 +465,19 @@ Practical limit: SD-sniffer JTAG uses the **microSD pins**, so it only works whi
   - No DDK matching, upstreamable.
   - Risks: non-conformant Vulkan 1.2 (needs `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`), and redroid's Mesa must be rebuilt with `imagination` + `zink`.
 - **Plan C, software.** redroid `guest` mode (ANGLE on SwiftShader). Only for light apps.
+
+**No full Android build is needed so far.** Both GPU routes are overlays on the stock `redroid/redroid:13.0.0_64only-240527` image, checked against the real image:
+- Route A: scripts 25/26, the DDK handshake and the linker namespaces.
+- Route M: script 32, the namespace link check.
+- VINTF fragments and the allocator service ship in the overlay, and redroid runs with SELinux off.
+
+A build becomes necessary only if:
+1. Route A fails at runtime in a way only a vendor build fixes. `scripts/31-make-aosp-vendor-tree.sh` already prepares `vendor/powervr-a733` for a source-built redroid.
+2. Route M's gbm_gralloc + Zink allocation fails and needs minigbm `gbm_mesa` with mapper 4: a vendor-only redroid build (section 16.11).
+3. The Cedar video engine has to be wired in through a Codec2 HAL built against redroid's tree. Overlaying Allwinner's prebuilt Codec2 service from the Android 13 SDK may avoid this; untested.
+4. Route M moves to an Android 14+ base.
+
+A full AOSP 13 build needs roughly 250+ GB of disk and 32–64 GB RAM, so it belongs on the build PC; this PC has 15 GB RAM and 63 GB free.
 
 ## 14. Source revisions
 
