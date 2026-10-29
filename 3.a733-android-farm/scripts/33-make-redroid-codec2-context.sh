@@ -80,6 +80,14 @@ on early-boot
     setprop vendor.codec2.disable.aisr 1
 RC
 
+# COPY keeps the context's modes, and Android's init skips any .rc that is group- or
+# world-writable ("Skipping insecure file"): the Codec2 service would never be defined.
+# Files 644, programs 755.
+find "$C/vendor" -type d -exec chmod 755 {} +
+find "$C/vendor" -type f -exec chmod 644 {} +
+find "$C/vendor/bin" -type f -exec chmod 755 {} +
+[ -z "$(find "$C/vendor" -name '*.rc' -perm /022)" ]
+
 cat > "$C/Dockerfile" <<'DF'
 # Only COPY, no RUN. Build on the board after redroid-pvr:13:
 #   docker build -t redroid-pvr-c2:13 .

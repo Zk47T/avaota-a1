@@ -54,6 +54,12 @@ for i in 1 2; do
   egl=$($A shell getprop ro.hardware.egl 2>/dev/null | tr -d '\r')
   [ "$egl" = POWERVR_ROGUE ] && pass "android$i GPU selected (ro.hardware.egl=POWERVR_ROGUE)" \
     || warn "android$i ro.hardware.egl='${egl:-none}': PowerVR not selected, software rendering"
+  case "$(sudo docker inspect -f '{{.Config.Image}}' "android$i" 2>/dev/null)" in redroid-pvr*)
+    # Route A images declare the IMG HALs only with this start argument (README 18)
+    sku=$($A shell getprop ro.boot.product.vendor.sku 2>/dev/null | tr -d '\r')
+    [ "$sku" = pvr ] && pass "android$i started with androidboot.product.vendor.sku=pvr (IMG HALs declared)" \
+      || warn "android$i started without androidboot.product.vendor.sku=pvr: IMG HALs off (40-board-setup.sh found no pvrsrvkm)" ;;
+  esac
   $A shell getprop > "$R/android$i-props.txt" 2>/dev/null
   $A shell dumpsys SurfaceFlinger > "$R/android$i-surfaceflinger.txt" 2>/dev/null
   if grep -q "PowerVR" "$R/android$i-surfaceflinger.txt"; then

@@ -26,6 +26,19 @@ run)
   grep -qw binder /proc/filesystems && echo "  binder (binderfs): ok" || echo "  binder: MISSING"
   [ -e /proc/pressure/memory ] && echo "  psi: ok" || echo "  psi: MISSING"
 
+  echo "== 1b. netfilter modules for Android's netd and for docker (README 18.2)"
+  # Every container's init empties the board's kernel.modprobe, so from then on the kernel cannot
+  # load a module on demand, for anyone. Load what netd's iptables rules need (the legacy tables,
+  # bpf, mark, TCPMSS and REJECT are built in) and what docker's nftables port mappings need, now
+  # and at every boot. xt_quota2 exists only in Android kernels; without it netd's data-usage
+  # alerts fail, as on any mainline kernel.
+  NF="xt_owner xt_u32 xt_connmark xt_state xt_conntrack xt_NFLOG nfnetlink_log xt_IDLETIMER xt_CT
+      xt_policy xt_limit xt_quota xt_MASQUERADE xt_nat iptable_nat ip6table_nat xt_pkttype
+      xt_length xt_helper xt_statistic xt_socket
+      nf_tables nft_compat nft_chain_nat nft_nat nft_ct nft_masq nft_reject_ipv4 nft_reject_ipv6 xt_addrtype"
+  for m in $NF; do sudo modprobe "$m" 2>/dev/null || echo "  $m: could not load"; done
+  printf '%s\n' $NF | sudo tee /etc/modules-load.d/redroid-netd.conf >/dev/null
+
   echo "== 2. Android-flavour GPU driver (DDK 24.2@6643903) + matching firmware"
   sudo install -D -m644 "$D/deploy/lib/modules/pvrsrvkm-android.ko" /lib/modules/$REL/extra/pvrsrvkm.ko
   sudo install -D -m644 "$D/deploy/lib/firmware/rgx.fw.36.56.104.183" /lib/firmware/rgx.fw.36.56.104.183
@@ -100,6 +113,13 @@ run)
     else
       VOL=(-v "$DATA":/data); EXTRA=
     fi
+    # Route A images declare the IMG gralloc HALs only with this flag (README 18). Give it only
+    # when pvrsrvkm is really up: declared without a working driver, the container cannot boot.
+    SKU=
+    case "$IMG" in redroid-pvr*)
+      if [ -d /sys/module/pvrsrvkm ] && [ -e /dev/pvr_sync ]; then SKU=androidboot.product.vendor.sku=pvr
+      else echo "  WARNING: pvrsrvkm is not up: android$i starts $IMG without the IMG HALs (software rendering)"; fi ;;
+    esac
     sudo docker rm -f android$i 2>/dev/null || true
     sudo docker run -itd --privileged --name android$i \
       --cgroup-parent=android.slice --cpuset-cpus=$CPUS \
@@ -108,7 +128,7 @@ run)
       "$IMG" \
       androidboot.redroid_gpu_mode=host \
       androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 \
-      androidboot.redroid_fps=30 androidboot.use_memfd=1 $EXTRA
+      androidboot.redroid_fps=30 androidboot.use_memfd=1 $SKU $EXTRA
   done
   echo "connect: adb connect <board-ip>:5555  and  :5556   (checks: README section 10)"
   ;;

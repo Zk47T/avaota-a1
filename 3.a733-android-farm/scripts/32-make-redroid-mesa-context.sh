@@ -80,9 +80,10 @@ sed 's/setprop ro.opengles.version 196610/setprop ro.opengles.version 196609/' \
   "$ROOT/vendor/etc/init/redroid.common.rc" > "$C/vendor/etc/init/redroid.common.rc"
 grep -q 'ro.opengles.version 196609' "$C/vendor/etc/init/redroid.common.rc"
 
-# redroid 17 also runs minigbm's gralloc 4.0, which libui prefers over gbm_gralloc (2.0), and
-# minigbm's generic backend cannot allocate on a render-only GPU. Keep redroid 13's stack:
-# minigbm's allocator off, its 4.0 manifest entries emptied (COPY cannot delete files).
+# A redroid 17 built without guide fix 8 (our 20261014/20261029 images) also runs minigbm's
+# gralloc 4.0, which libui prefers over gbm_gralloc (2.0), and minigbm's generic backend cannot
+# allocate on a render-only GPU. Keep redroid 13's stack: minigbm's allocator off, its 4.0
+# manifest entries emptied (COPY cannot delete files). Our bases from 20261029b on have no minigbm.
 MG=android.hardware.graphics.allocator@4.0-service.minigbm.rc
 if [ -e "$ROOT/vendor/etc/init/$MG" ]; then
   sed '/^service vendor.graphics.allocator-4-0 /a\    disabled' "$ROOT/vendor/etc/init/$MG" > "$C/vendor/etc/init/$MG"
@@ -92,6 +93,14 @@ if [ -e "$ROOT/vendor/etc/init/$MG" ]; then
     echo '<manifest version="1.0" type="device"/>' > "$C/vendor/etc/vintf/manifest/$x"
   done
 fi
+
+# COPY keeps the context's modes, and Android's init skips any .rc that is group- or
+# world-writable ("Skipping insecure file"): a 664 redroid.common.rc means no gpu_config, no
+# EGL driver, and SurfaceFlinger aborts in a loop. Files 644, programs 755.
+find "$C/vendor" -type d -exec chmod 755 {} +
+find "$C/vendor" -type f -exec chmod 644 {} +
+find "$C/vendor/bin" -type f -exec chmod 755 {} +
+[ -z "$(find "$C/vendor" -name '*.rc' -perm /022)" ]
 
 cat > "$C/Dockerfile" <<DF
 # Only COPY, no RUN: build on the board (native arm64 docker), or on a PC with

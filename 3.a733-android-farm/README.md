@@ -109,6 +109,8 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 33-make-redroid-codec2-context.sh  Route A + video engine: Allwinner Codec2 HAL layer (section 17.4)
 │   ├── aw_android_image.py              (used by 33) read Allwinner Android .img: IMAGEWTY, sparse, super, EROFS
 │   ├── 35-test-on-redroid-host.sh       RUN ON YOUR OTHER REDROID PC
+│   ├── 36-redroid-vm-test.sh            build PC: boot the images in an emulated arm64 VM, no GPU; reboot-safety test (section 18.4)
+│   ├── sphal_loadtest.c                 (used by 36) load vendor libraries through Android's own sphal linker namespace
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
 │   ├── 41-gpu-open-tests.sh             board: apercel / Route L / fw 1.1 tests with insmod, evidence per test (section 16.18)
 │   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
@@ -120,6 +122,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
     ├── fw/1.0, fw/1.1                   the two GPU firmware files, staged for the board (BOARD-DAY step 3)
     ├── host-mesa/                       27-build-host-mesa.sh: mesa-farm-arm64.tar.gz, a733-mesa_*.deb, SHA256SUMS.*
     ├── redroid-a733-{12,17}-arm64.tar.zst  redroid 12 / 17 images, redroid-pvr + redroid-mesa each (section 18)
+    ├── vm/, vm-test/                    36-redroid-vm-test.sh: the VM's disk and key; per-image results
     └── mainline-watch/<date>.json       60-mainline-watch.py snapshots (per PC; baseline values in 16.9)
 ```
 
@@ -302,6 +305,8 @@ Why route B is worth it:
 | TikTok or Instagram in foreground | 0.4–0.7 GB |
 | GMS / microG, if needed | +0.2–0.4 GB |
 | **Instance total** | **1.3–1.9 GB** |
+
+Measured in the VM of section 18.4, idle right after boot, no app, software rendering, both on the same warm VM: redroid 13 uses 0.53 GB and redroid 17 0.79 GB. So plan about 0.25 GB more per redroid 17 instance. (Docker's figure includes recently read file cache: right after the VM itself booted, redroid 13 showed 1.08 GB.)
 
 | Board | Host | 2 instances | Verdict |
 |---|---|---|---|
@@ -1347,7 +1352,7 @@ So the gain per instance ranges from large (H.264/HEVC feeds, scrcpy) to nothing
 
 ## 18. redroid 12 and redroid 17 on the A733 (prepared 2026-10-29)
 
-**Short answer: both look possible, on either GPU route.** Every combination passes the static link checks below, and the images are built. Nothing has run on a board yet.
+**Short answer: both look possible, on either GPU route.** Every combination passes the static link checks below. The images are built, and they boot in an emulated arm64 machine without a GPU (18.4). Nothing has run on a board yet.
 
 **The rule that shapes everything: one GPU kernel driver per board, shared by all containers.**
 - **Route A host** (`pvrsrvkm`, DDK 24.2@6643903): the images `redroid-pvr:12`, `redroid-pvr:13` and `redroid-pvr:17` use the same Android 13 blobs, so **any mix of versions can run side by side**.
@@ -1356,42 +1361,43 @@ So the gain per instance ranges from large (H.264/HEVC feeds, scrcpy) to nothing
 
 | | redroid 12 | redroid 13 (the main plan) | redroid 17 |
 |---|---|---|---|
-| Base image | official `redroid/redroid:12.0.0_64only-latest`, pinned to `sha256:a6c464bb…`; SDK 31 | official `13.0.0_64only-240527`; SDK 33 | our build `aic/redroid-rk3588:17.0.0-panthor-20261029` (Nredroid 17.0.0, guide in `5.redroid-self-build/4.rk3588-a17/`); SDK 37, `CP2A.260605.016` |
+| Base image | official `redroid/redroid:12.0.0_64only-latest`, pinned to `sha256:a6c464bb…`; SDK 31 | official `13.0.0_64only-240527`; SDK 33 | our build `aic/redroid-rk3588:17.0.0-panthor-20261030` (Nredroid 17.0.0 plus the fixes in 18.3; guide in `5.redroid-self-build/4.rk3588-a17/`); SDK 37, `CP2A.260605.016` |
 | Library model | VNDK v31 | VNDK v33 | no VNDK: LLNDK plus vendor copies (`libc++`, `libutils`, `libhidlbase`, …) |
-| Base graphics | Mesa 24.0.8 prebuilts, gbm_gralloc (allocator 2.0, mapper 2.1), fake composer, GLES RenderEngine | same as 12 | Mesa 26.1.4 (panfrost, lavapipe), gbm_gralloc **and** minigbm gralloc 4.0, fake composer, GLES RenderEngine |
+| Base graphics | Mesa 24.0.8 prebuilts, gbm_gralloc (allocator 2.0, mapper 2.1), fake composer, GLES RenderEngine | same as 12 | Mesa 26.1.4 (panfrost, lavapipe), gbm_gralloc (allocator 2.0), fake composer, GLES RenderEngine. minigbm's gralloc 4.0 removed (18.3). |
 | No `ashmem` needed (`use_memfd`) | yes | yes | yes |
-| **Route A** (Android 13 DDK blobs) | **9/9 OK**, blobs unchanged | 9/9 OK | **9/9 OK** after two changes (below) |
+| **Route A** (Android 13 DDK blobs) | **9/9 OK**, blobs unchanged | 9/9 OK | **9/9 OK**, with Android 13's `libion.so` added (below) |
 | **Route M** (Mesa 26.3 PowerVR + Zink) | API 31 build, **6/6 OK** | API 33, 6/6 OK | API 35 build, **6/6 OK** |
-| Images on the build PC | `out/redroid-a733-12-arm64.tar.zst`, 633 MB (both routes) | `redroid-pvr-13-arm64.tar`, plus the `out/redroid-mesa` context | `out/redroid-a733-17-arm64.tar.zst`, 807 MB (both routes) |
+| Images on the build PC | `out/redroid-a733-12-arm64.tar.zst`, 633 MB (both routes) | `redroid-pvr-13-arm64.tar`, plus the `out/redroid-mesa` context | `out/redroid-a733-17-arm64.tar.zst`, 809 MB (both routes) |
 
 **What redroid 17 needed:**
 - **Route A:**
   - Android 13's `libion.so` is added. `gralloc.powervr.so` links it, but allocates through `libdmabufheap`; `ion_open` is a leftover path, and our kernel has DMA-BUF heaps, not ION.
-  - minigbm's allocator 4.0 service is switched off, and the IMG HALs take over its two manifest entries. Otherwise two services would claim `IAllocator@4.0/default`, and `libui` always picks the highest gralloc version present.
+  - The IMG HALs are declared the same way as on 12 and 13 (18.1). Our 17 base has no minigbm gralloc 4.0 any more (18.3), so nothing else claims `IAllocator@4.0/default`; `libui` always picks the highest gralloc version present. For a base that still has minigbm, script 30 switches it off.
 - **Route M:**
   - Mesa is built for API 35. NDK r29 stops at 35, which is BayLibre's own target, and an API 35 build runs on Android 17.
   - GBM is installed as `libgbm_mesa.so` (the name A17's `gralloc.gbm.so` links), and A17's own `libdrm.so` is kept.
-  - minigbm's gralloc 4.0 is switched off, so the stack equals redroid 13's (gbm_gralloc via allocator 2.0). minigbm's generic backend cannot allocate on a render-only GPU.
+  - The stack equals redroid 13's (gbm_gralloc via allocator 2.0). minigbm's generic backend cannot allocate on a render-only GPU; script 32 switches it off if a base still has it.
 - **Android 17 still supports the old HALs.** Its `libui` keeps the Gralloc2/3/4 clients next to Gralloc5, and the image runs `hwservicemanager`, because its own composer and allocator are HIDL. So an Android 13-era HIDL gralloc 4.0 has a client.
 
 **Host kernel.** Our 6.6.98 kernel has everything the three versions need: binderfs, memfd, PSI, the BPF and netfilter parts of Android's network stack, sync files and DMA-BUF heaps. Missing, and not needed for the farm:
 - `ashmem`: all three use memfd;
 - `userfaultfd`: ART falls back to its older GC;
 - `tun`: only for VPN apps;
-- kernel BTF.
+- kernel BTF (no networking program uses CO-RE);
+- BPF tracing (`BPF_EVENTS`, uprobes, kprobes): Android 17 then loses per-app CPU time, GPU memory and wakelock statistics. Its loaders treat those programs as optional (checked in their source).
+- Many netfilter matches are modules here, which matters because of 18.2.
 
 **Runtime risks (static checks can't see these):**
-- **redroid 12, Route A:** an Android 13 vendor on an Android 12 system. Treble promises the opposite direction, and only the symbols were checked.
-- **redroid 17, Route A:**
-  - The Android 13 blobs run against A17's vendor copies of `libutils`, `libcutils` and friends. The names match; the C++ class layouts were not checked.
-  - The A17 base itself has never booted.
+- **redroid 12, Route A:** an Android 13 vendor on an Android 12 system. Treble promises the opposite direction. The blobs load and link in Android 12's real linker namespaces (18.4); only the GPU can show whether they run.
+- **redroid 17, Route A:** the Android 13 blobs run against A17's vendor copies of `libutils`, `libcutils` and friends. They load and link in A17's real linker namespaces (18.4), but the C++ class layouts were not checked, and only the GPU can show whether they run.
 - **Both routes:** the usual unknowns of sections 16.12 to 16.14 (SurfaceFlinger on the DDK or Zink, buffer sharing).
 
 **How they were checked.**
 - `redroid_link_check.py` now reads the image's own VNDK lists (`.31`, `.33`), or models a VNDK-less image (LLNDK only).
 - For packed APEXes (A17), it uses the image's bootstrap bionic.
 - Re-runs on redroid 13 give the same results as before.
-- Each new image was built on the build PC and contains every overlay file (25/25, 10/10, 27/27, 13/13).
+- Each new image was built on the build PC and contains every overlay file (`redroid-pvr:12` 24/24, `redroid-mesa:12` 10/10, `redroid-pvr:17` 25/25, `redroid-mesa:17` 10/10).
+- Then every image was booted in the VM of 18.4, with Android's real linker loading each route's libraries.
 
 **On the board** (BOARD-DAY step 11):
 - **Route A:** `IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run`. It loads each version from its tar the first time, and gives each version its own data folder (`data1-12`, `data2-17`), because one Android version must never reuse another's `/data`.
@@ -1410,6 +1416,70 @@ So the gain per instance ranges from large (H.264/HEVC feeds, scrcpy) to nothing
 **Scripts:**
 - `23` takes `API=31|33|35`;
 - `30` and `32` take `REDROID=12|13|17`;
-- `redroid_base.sh` (new) maps a version to its base image, extracted root and API level;
-- `40` takes `IMAGE1` and `IMAGE2`;
-- `50` reports each instance's image and Android version.
+- `redroid_base.sh` maps a version to its base image, extracted root and API level;
+- `36` boots the images in an emulated arm64 VM on the build PC (18.4), with `sphal_loadtest.c` for the linker test;
+- `40` takes `IMAGE1` and `IMAGE2`, passes `sku=pvr` to Route A containers when `pvrsrvkm` is up (18.1), and loads the netfilter modules netd needs (18.2);
+- `50` reports each instance's image, Android version and, for Route A, the `sku` flag.
+
+### 18.1 Route A declares the IMG HALs only on request
+
+- A HIDL HAL that the VINTF manifest declares but that never starts makes `IAllocator::getService()` wait forever (libhidl retries for any declared hwbinder HAL), so SurfaceFlinger never comes up.
+- Until 2026-10-29 every Route A image declared the IMG allocator and mapper, but started the allocator only when the container saw a PowerVR GPU. On a board where `pvrsrvkm` failed, every container would have hung at boot instead of falling back to software rendering.
+- **Seen in the VM (18.4):** the old `redroid-pvr:13`, started without a GPU, never finished booting. For 10 minutes SurfaceFlinger logged `getService: Trying again for android.hardware.graphics.allocator@4.0::IAllocator/default` (624 times), and system_server waited for SurfaceFlinger. The new image boots in the same VM in 131 s.
+- **Android 17 is stricter about the manifest.** The DDK's allocator entry names its instance twice (`<version>` + `<interface>`, and `<fqname>`). Android 12 and 13 accept that. Android 17's libvintf rejected the whole `manifest_pvr.xml` (`VINTF parse error ... Duplicated android.hardware.graphics.allocator`): with no manifest, keymint and keystore2 crashed and init gave up. Script 30 now drops the repeated `<fqname>`.
+- **The switch itself, checked in the VM with `36 sku`** on the 12, 13 and 17 Route A images: started with `sku=pvr`, Android sees `ro.boot.product.vendor.sku=pvr`, `gpu_config` selects `POWERVR_ROGUE`, the IMG allocator service is defined and running, and `lshal` lists `allocator@4.0::IAllocator/default` and the IMG mapper 4.0. Boot then waits for SurfaceFlinger, which cannot work without the GPU there.
+- Now the IMG HALs are in `/vendor/etc/vintf/manifest_pvr.xml` (the image's `manifest.xml` plus the IMG entries). Android reads it **instead of** `manifest.xml` only when the container starts with `androidboot.product.vendor.sku=pvr`: libvintf's vendor SKU manifest, present in the 12, 13 and 17 images.
+- `40-board-setup.sh` passes the flag only when `pvrsrvkm` and `/dev/pvr_sync` are up. Otherwise it prints a warning and the container boots with software rendering. `50-board-report.sh` reports the flag.
+- **Starting a Route A image by hand on the board: add `androidboot.product.vendor.sku=pvr`**, or it runs without the GPU.
+
+### 18.2 What every redroid container changes on the board
+
+The containers share the board's kernel, and Android's init writes kernel settings at every container boot (12, 13 and 17 alike):
+- **`kernel.modprobe` is emptied.** From the first container on, the kernel can't load a module on demand, for any program on the board. netd's iptables rules need about a dozen netfilter modules (`owner`, `u32`, `connmark`, `state`, `NFLOG`, `IDLETIMER`, `CT`, `policy`, `limit`, `quota`, the nat table), and docker's nftables port mappings need theirs (`nf_tables`, `nft_compat`, `nft_chain_nat`, …). `40-board-setup.sh` now loads all of them first, and at every boot through `/etc/modules-load.d/redroid-netd.conf`. The legacy tables (`filter`, `mangle`, `raw`) are built into our kernel. `xt_quota2` exists only in Android kernels: without it netd's data-usage alerts fail, which is harmless here.
+  - What the preload buys, seen in the VM: without it, netd could not even set up its tables (`unable to initialize table 'filter'`, `'mangle'`), so per-app firewall rules, data saver and the marks on incoming packets were missing. Ping and DNS still worked. With it, netd reports no errors except `quota2`.
+- **`kernel.sysrq=0`.** The serial console's SysRq stops working. Before debugging a hang over serial, run `sudo sysctl kernel.sysrq=1` (after the containers have started).
+- **Panics.** Our kernel already panics on an oops (`CONFIG_PANIC_ON_OOPS=y`; Android writes the same), then waits forever (`CONFIG_PANIC_TIMEOUT=0`). Keep that for board day: the board stays put and the serial log keeps the trace. For an unattended farm, add `kernel.panic = 10` in `/etc/sysctl.d/` so a panic reboots the board. It is not set by default, because a panic at every boot would become a reboot loop.
+- **Also global:** `vm.overcommit_memory=1`; `vm.dirty_*` writeback every 2 s (more, smaller writes to flash, which `55-storage-report.sh` measures); `kernel.pid_max=65535`; the `kernel.perf_event_*` limits.
+- **Our Android 17 images before 20261029b:** a container stop or reboot sent SIGTERM to every process on the board (18.3).
+
+### 18.3 Our redroid 17 base: what booting it found
+
+Booting the A17 base in the VM (18.4) found five problems that stopped it booting, and one that left it without sound. Each is fixed in the build guide (`5.redroid-self-build/4.rk3588-a17/BUILD-REDROID17-RK3588.md`, fixes 6–9 in section 3.2, plus sections 5 and 6). `aic/redroid-rk3588:17.0.0-panthor-20261030` is rebuilt with all of them. The 20261014 and 20261029 images can't boot; 20261029b boots but has no sound. Don't use them.
+- **No first-stage init.** Android 17 must start from `/ramdisk/init` (built by `m init_first_stage`). `/system/bin/init` alone aborts at once.
+- **A container reboot hit the whole board.** On every stop or reboot with `/data` as a volume (our setup), A17's init wrote to `/proc/sysrq-trigger`. That file belongs to the board's kernel, so it sent SIGTERM to every process on the board. A hung shutdown would also have remounted the board's disks read-only and crashed the kernel. In the VM this showed up as `sysrq: Terminate All Tasks`, with SSH and journald restarting. Fix 6 makes init stop only the container's own processes. Checked with `36 safety`: after `adb reboot` the container exits with status 0, a process on the host survives, and the kernel logs no sysrq.
+- **apexd race.** `/dev/block` did not exist yet when Android mounted its APEX packages, so some boots failed at random (fix 6).
+- **netd's self-test.** netd's BPF program compares process IDs across the container boundary, so netd's startup test failed and Android rebooted itself. This happens on kernels 6.1 to 6.17, which includes ours (fix 7).
+- **minigbm boot loop.** minigbm's gralloc 4.0 has no backend for PowerVR, panthor or a container without a GPU. It crashed, and each crash restarted SurfaceFlinger (fix 8). The base now uses gbm_gralloc only, like 12 and 13.
+- **No sound.** Nredroid's prebuilt `audio.primary.redroid.so` needs a C++ library symbol (`std::__shared_weak_count::__get_deleter`) that Android 17's libc++ no longer exports. The audio HAL could not load it, so audioserver had no output device and never created its policy manager (`AudioPolicyManager: 0x0`), and apps that play sound could fail. Fix 9 drops the module; the HAL then loads AOSP's stub `audio.primary.default`, as on 12 and 13. Checked in the VM by moving the module aside: audioserver then had a primary output.
+
+### 18.4 Boot tests without a board (script 36)
+
+- `scripts/36-redroid-vm-test.sh` runs Ubuntu 24.04 arm64 under QEMU on the build PC (CPU emulation, no KVM), with docker and binder. It boots each image with software rendering (guest mode). No GPU path is exercised.
+- `test IMAGE [pvr|mesa]` reports whether the image boots, its memory, network (ping by IP and by name), netd's iptables errors and system_server watchdog kills. With `pvr` or `mesa`, Android's own dynamic linker also loads the route's vendor libraries in the sphal namespace (`sphal_loadtest`).
+- `safety IMAGE` starts the image with a `/data` volume, as the farm does, runs `adb reboot`, and checks that a process on the host survives and that the kernel log shows no sysrq.
+- The emulated CPU is 10–20 times slower than the board, so emulated boot times say nothing about the board. The tests pass `ro.hw_timeout_multiplier=10`, so that system_server's watchdog allows for it (redroid turns `ro.*` start arguments into properties). The board does not need it.
+- Like the board after `40-board-setup.sh`, the VM has the netfilter modules netd needs loaded (18.2).
+- `sku IMAGE` starts a Route A image with `sku=pvr` and shows whether the IMG HALs are declared and the IMG allocator service is defined and running. There is no GPU, so SurfaceFlinger cannot start and boot stalls by design.
+
+**Bug found in our own overlays (all routes, all versions; fixed 2026-10-30).** The context scripts left their files at mode 664 (the build PC's umask), and `COPY` keeps modes. Android's init skips any `.rc` file that is group- or world-writable ("Skipping insecure file"). So:
+- **Route A:** the IMG allocator service was never defined. On a board with `pvrsrvkm` and `sku=pvr`, the IMG HALs would have been declared with nothing to start them, and every container would have hung at boot even with a working GPU.
+- **Route M:** redroid's own `redroid.common.rc` (shipped with the GLES version change) was skipped, so `gpu_config` never ran and SurfaceFlinger aborted in a loop (`couldn't find an OpenGL ES implementation`).
+- **Codec2 overlay:** its HAL service was never defined.
+- Scripts 30, 32 and 33 now set files to 644 and programs to 755, and fail if an `.rc` is still writable. All contexts, images and tars were rebuilt.
+
+Results (2026-10-29/30):
+
+| Image | `boot_completed` (emulated) | Container RAM after boot | Network, DNS | Notes |
+|---|---|---|---|---|
+| `redroid/redroid:13.0.0_64only-240527` | yes, 121 s | 526 MiB | ok | netd: only the 2 expected `quota2` errors. **Reboot with a `/data` volume: host untouched** (canary alive, no sysrq). |
+| `aic/redroid-rk3588:17.0.0-panthor-20261030` (fixes 6–9) | yes, 627 s | 823 MiB | ok | netd: no errors. No watchdog kills. **Audio: primary output present.** |
+| `aic/redroid-rk3588:17.0.0-panthor-20261029b` (before fix 9) | yes, 533 s | 786 MiB | ok | netd: no errors. No watchdog kills. **Reboot with a `/data` volume: host untouched.** No audio output device: the prebuilt redroid audio module cannot load (18.3, fix 9). |
+| `redroid-pvr:13` (Route A, started without `sku=pvr`) | yes, 131 s | 651 MiB | ok | Stock allocator path, as designed without the flag. Android 13's linker loads all six PowerVR libraries; the IMG allocator service links. |
+| `redroid-pvr:13` built **before** the sku switch | **no** | – | – | Hangs: SurfaceFlinger waits forever for the declared IMG allocator (18.1). |
+| `redroid-pvr:17` (Route A) | yes, 544 s | 808 MiB | ok | **Android 17's linker loads all six Android 13 PowerVR libraries** in the sphal namespace (EGL, GLES 1 and 2, Vulkan, gralloc, mapper 4.0); the IMG allocator service links. |
+| `redroid/redroid:12.0.0_64only-latest` | yes, 85 s | 533 MiB | ok | netd: only the 2 expected `quota2` errors. **Reboot with a `/data` volume: host untouched** (the container keeps running). |
+| `redroid-pvr:12` (Route A) | yes, 82 s | 509 MiB | ok | **Android 12's linker loads all six Android 13 PowerVR libraries**; the IMG allocator service links. |
+| `redroid-mesa:13` (Route M) | yes, 147 s | 655 MiB | ok | **Android 13's linker loads all seven Mesa 26.3 libraries** (EGL, GLES 1 and 2, Vulkan, gallium, GBM driver, `gralloc.gbm`). Before the mode fix, Route M images never booted (the bug above). |
+| `redroid-mesa:12` (Route M) | yes, 117 s | 1.0 GiB | ok | The same seven load in Android 12. |
+| `redroid-mesa:17` (Route M) | yes, 660 s | 805 MiB | ok | The same seven (API 35 build) load in Android 17. |
+| `redroid-pvr:12`, `:13`, `:17` started with `sku=pvr` (`36 sku`) | stalls by design (no GPU) | – | – | On all three: `POWERVR_ROGUE` selected, the IMG allocator 4.0 declared and running, the IMG mapper 4.0 declared (18.1). |

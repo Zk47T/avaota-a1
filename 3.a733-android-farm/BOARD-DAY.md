@@ -1,7 +1,7 @@
 # A733 board day: the first session
 
 > Written for: the person bringing up the first Orange Pi Zero 3W (6 GB) with the redroid + PowerVR farm.
-> Prepared in software on 2026-10-28, updated 2026-10-29: apercel first (step 4a, already proven on another Zero 3W, README 16.10), Imagination fw 1.1 (step 4c), open stack (README 16.8). Nothing here has run on our hardware yet. Every build in step 3 was run on the build PC on 2026-10-29 (logs in `logs/2026-10-29-board-day-builds/`, hashes in `KIT-SHA256.txt`).
+> Prepared in software on 2026-10-28, updated 2026-10-29/30: apercel first (step 4a, already proven on another Zero 3W, README 16.10), Imagination fw 1.1 (step 4c), open stack (README 16.8). Nothing here has run on our hardware yet. Every build in step 3 was run on the build PC on 2026-10-29/30 (logs in `logs/2026-10-29-board-day-builds/`, hashes in `KIT-SHA256.txt`). On 2026-10-30 every redroid image was booted in an emulated arm64 VM, which found and fixed several bugs that would have stopped the containers on the board (README 18.1–18.4).
 
 ## 1. What is ready, and what the board must decide
 
@@ -9,8 +9,9 @@ Ready (built or checked without a board):
 
 - Kernel `6.6.98-sun60iw2-redroid`: binder, PSI, zram, docker options, USB Ethernet (`r8152` module). Packages in `out/deploy/debs/`.
 - GPU driver `pvrsrvkm` (Android flavour, DDK 24.2@6643903) and the matching firmware `rgx.fw` / `rgx.sh` (36.56.104.183). The driver and blobs match (script 25 PASS).
-- redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. **Never booted.**
-- redroid 12 and 17 (README 18): `out/redroid-a733-12-arm64.tar.zst` (633 MB) and `out/redroid-a733-17-arm64.tar.zst` (807 MB). Each holds `redroid-pvr:<v>` (Route A, the same blobs and driver as 13) and `redroid-mesa:<v>` (Route M). Static link checks pass; **never booted** (step 11).
+- redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. Rebuilt 2026-10-30 (README 18.1 and the overlay mode bug in 18.4).
+- redroid 12 and 17 (README 18): `out/redroid-a733-12-arm64.tar.zst` (633 MB) and `out/redroid-a733-17-arm64.tar.zst` (809 MB). Each holds `redroid-pvr:<v>` (Route A, the same blobs and driver as 13) and `redroid-mesa:<v>` (Route M). Redroid 17 is our own `17.0.0-panthor-20261030` build (README 18.3).
+- **All of these boot in an emulated arm64 VM without a GPU** (README 18.4, `scripts/36-redroid-vm-test.sh` on the build PC), and Android's own linker loads each route's GPU libraries on 12, 13 and 17. **None has run on a board.**
 - Scripts: `40-board-setup.sh` (kernel, run), `41-gpu-open-tests.sh` (steps 4a–4c with evidence), `45-usb-net.sh` (USB Ethernet), `50-board-report.sh` (PASS / WARN / FAIL report).
 - Host GPU userspace for the open-driver tests, prebuilt for Debian trixie arm64 (README 16.18):
   - `out/host-mesa/mesa-farm-arm64.tar.gz`: our Route M Mesa tree; binds both `powervr` and `apercel`; unpacks to `/opt/mesa-farm`.
@@ -148,10 +149,12 @@ Only the board can decide:
     - **Run:** `sudo docker rm -f android1 android2 && IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run`.
       - It loads both images from `~/farm/redroid-a733-{12,17}-arm64.tar.zst` the first time.
       - Each version gets its own data folder (`data1-12`, `data2-17`). Never point one Android version at another's `/data`.
-    - **Check:** `./50-board-report.sh` now prints each instance's image and Android version. Then:
+    - **Check:** `./50-board-report.sh` now prints each instance's image, Android version and `sku` flag. Then:
+      - Both instances report `started with androidboot.product.vendor.sku=pvr` (README 18.1). Without it a Route A image runs in software rendering by design.
       - `ro.hardware.egl` must be `POWERVR_ROGUE` on both instances, and SurfaceFlinger must report PowerVR, as in step 6.
-      - Redroid 17 only: the IMG allocator runs (`adb -s <ip>:5556 shell getprop init.svc.vendor.gralloc-4-0` prints `running`), and minigbm's does not (`init.svc.vendor.graphics.allocator-4-0` prints nothing or `stopped`).
+      - The IMG allocator runs on both: `adb -s <ip>:5556 shell getprop init.svc.vendor.gralloc-4-0` prints `running`. (Our 17 base has no minigbm allocator any more, README 18.3.)
       - `adb -s <ip>:5556 logcat -d | grep -i -E 'gralloc|allocator|mapper|libion|EGL'` for errors.
+      - Sound on both: `adb -s <ip>:5556 shell dumpsys media.audio_policy | grep -m1 'Primary Output'` prints an I/O handle. Nothing printed on 17 means an image without fix 9 (README 18.3).
     - **Order:** 12 first, then 17, one version per run if anything misbehaves (`IMAGE1=redroid-pvr:12` alone keeps instance 2 on 13).
     - **Back to the plan:** `sudo docker rm -f android1 android2 && ./40-board-setup.sh run`.
     - **Save:** the report folder, and which version booted, reached `boot_completed` and used the GPU.
@@ -176,6 +179,10 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 | GPU errors or firmware timeout | Keep the dmesg lines from `50-board-report.sh`. Do not retry in a loop. |
 | `no DRM device named 'pvr'` | `sudo mount -t debugfs none /sys/kernel/debug`, then run the report again. |
 | Containers do not reach `boot_completed` | Check `docker logs android1` and `adb logcat`. Try the software fallback below. |
+| Route A instance boots, but in software; the report says `started without androidboot.product.vendor.sku=pvr` | `40-board-setup.sh` found no `pvrsrvkm` or `/dev/pvr_sync` when it started the container, and said so with a WARNING. Fix the driver (rows above), then run `./40-board-setup.sh run` again. By hand: add `androidboot.product.vendor.sku=pvr` to `docker run` (README 18.1). |
+| netd errors in `adb logcat` (`IptablesRestoreController: iptables error`) other than `quota2` | A netfilter module is missing. Containers stop the kernel from loading modules (README 18.2): `lsmod | grep xt_`, then `sudo modprobe <module>` and restart the container. `40-board-setup.sh run` loads the usual set. |
+| Stopping or rebooting a container also kills SSH or the other container; `dmesg` shows `sysrq: Terminate All Tasks` | One of our redroid 17 images from before 20261029b (README 18.3). Use the kit's `redroid-a733-17-arm64.tar.zst`. |
+| SysRq on the serial console does nothing | Android set `kernel.sysrq=0` when a container booted: `sudo sysctl kernel.sysrq=1`. |
 | Second instance slow or killed | Stop it (`sudo docker rm -f android2`), check `free -m` and `docker stats`. |
 | USB Ethernet gives no link | `lsusb`, then `dmesg | grep -i -E "rtl|r8152"`, then `sudo modprobe r8152`. |
 | `deferring` in dmesg after `insmod powervr.ko` | The firmware file is missing or in the wrong path. Check `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). |

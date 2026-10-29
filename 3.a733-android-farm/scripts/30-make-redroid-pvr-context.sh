@@ -31,8 +31,8 @@ if [ ! -e "$ROOT/vendor/lib64/libion.so" ] && [ ! -e "$ROOT/system/apex/com.andr
   [ -f "$ION" ] || { echo "run ./scripts/26-check-blobs-vs-redroid.sh first (it caches redroid 13)"; exit 1; }
   cp "$ION" "$C/vendor/lib64/"
 fi
-# IMG allocator service: make it "disabled" and start it only when gpu_config.sh
-# found the PowerVR driver. Otherwise it crash-loops on a non-PVR host and its
+# IMG allocator service: make it "disabled" and start it only in sku=pvr containers
+# (gpu_config.sh below). On a non-PVR host it crash-loops, and its
 # "onrestart restart surfaceflinger" keeps the container from ever booting.
 sed '/^service vendor.gralloc-4-0 /a\    disabled' \
   "$B/etc/init/android.hardware.graphics.allocator@4.0-service.img.rc" \
@@ -42,18 +42,42 @@ cat > "$C/vendor/etc/init/redroid-pvr.rc" <<'RC'
 on property:vendor.redroid.pvr=1
     start vendor.gralloc-4-0
 RC
-if [ -e "$ROOT/vendor/etc/vintf/manifest/android.hardware.graphics.allocator@4.0.xml" ]; then
-  # redroid 17 declares minigbm's gralloc 4.0 under these names. The IMG HALs take them
-  # over (one IAllocator 4.0 instance), and minigbm's allocator service is switched off.
-  cp "$B/etc/vintf/manifest/android.hardware.graphics.allocator@4.0.img.xml" \
-     "$C/vendor/etc/vintf/manifest/android.hardware.graphics.allocator@4.0.xml"
-  cp "$B/etc/vintf/manifest/android.hardware.graphics.mapper@4.0-passthrough.img.xml" \
-     "$C/vendor/etc/vintf/manifest/android.hardware.graphics.mapper@4.0.xml"
-  MG=android.hardware.graphics.allocator@4.0-service.minigbm.rc
+# Declare the IMG gralloc HALs only for containers started with androidboot.product.vendor.sku=pvr
+# (40-board-setup.sh sets it when pvrsrvkm is up): libvintf then reads manifest_pvr.xml instead of
+# manifest.xml. A HAL that is declared but never started hangs boot: libui's IAllocator::getService()
+# waits forever for any hwbinder HAL the manifest declares (libhidl ServiceManagement.cpp).
+python3 -I - "$ROOT/vendor/etc/vintf/manifest.xml" "$B"/etc/vintf/manifest/*.xml \
+  > "$C/vendor/etc/vintf/manifest_pvr.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+base = ET.parse(sys.argv[1]).getroot()     # the image's own manifest, attributes kept
+for frag in sys.argv[2:]:
+    for hal in ET.parse(frag).getroot().findall("hal"):
+        # The DDK's allocator entry names its instance twice (<version>+<interface> and <fqname>).
+        # Android 12/13 accept that; Android 17's libvintf rejects the whole manifest
+        # ("Duplicated ..."), and with no manifest keystore2 crashes and init gives up.
+        named = {f"@{v.text.strip()}::{i.findtext('name').strip()}/{n.text.strip()}"
+                 for v in hal.findall("version") for i in hal.findall("interface")
+                 for n in i.findall("instance")}
+        for fq in hal.findall("fqname"):
+            if fq.text.strip() in named:
+                hal.remove(fq)
+        base.append(hal)
+ET.indent(base)
+sys.stdout.write(ET.tostring(base, encoding="unicode") + "\n")
+PY
+grep -q 'android.hardware.graphics.allocator' "$C/vendor/etc/vintf/manifest_pvr.xml"
+MG=android.hardware.graphics.allocator@4.0-service.minigbm.rc
+if [ -e "$ROOT/vendor/etc/init/$MG" ]; then
+  # A redroid 17 built without guide fix 8 also declares minigbm's gralloc 4.0 (our 20261029b
+  # and later bases do not). With the IMG HALs it would be a second IAllocator 4.0, and without them
+  # minigbm cannot allocate on this GPU: off in both cases, its manifest entries emptied
+  # (COPY cannot delete files), so the stock path is gbm_gralloc 2.0.
   sed '/^service vendor.graphics.allocator-4-0 /a\    disabled' "$ROOT/vendor/etc/init/$MG" > "$C/vendor/etc/init/$MG"
   grep -q '^    disabled' "$C/vendor/etc/init/$MG"
-else
-  cp "$B"/etc/vintf/manifest/*.xml "$C/vendor/etc/vintf/manifest/"
+  for x in android.hardware.graphics.allocator@4.0.xml android.hardware.graphics.mapper@4.0.xml; do
+    echo '<manifest version="1.0" type="device"/>' > "$C/vendor/etc/vintf/manifest/$x"
+  done
 fi
 cp "$B/etc/powervr.ini" "$C/vendor/etc/"
 # Note: firmware is loaded by the HOST kernel (request_firmware -> host /lib/firmware),
@@ -62,27 +86,15 @@ cp "$B/etc/powervr.ini" "$C/vendor/etc/"
 # --- GPU selection: add a "pvr" case in front of redroid's own script ---
 cat > "$C/gpu_config.sh" <<'SH'
 #!/system/bin/sh
-# redroid gpu_config.sh wrapper: if the host exposes the PowerVR DRM node
-# ("pvr", from pvrsrvkm) and mode is host/auto, use the IMG blobs.
-# Otherwise fall back to the stock redroid logic (mesa / swiftshader).
-mode=$(getprop ro.boot.redroid_gpu_mode guest)
-pvr=""
-if [ "$mode" = "host" ] || [ "$mode" = "auto" ]; then
-  # debugfs is not mounted inside a container by default: mount it if we can
-  [ -d /sys/kernel/debug/dri ] || mount -t debugfs none /sys/kernel/debug 2>/dev/null
-  for n in /sys/kernel/debug/dri/*/name; do
-    [ -f "$n" ] || continue
-    [ "$(cut -d' ' -f1 "$n")" = "pvr" ] && pvr=1
-  done
-  # no debugfs view: accept the loaded module with its render and sync nodes
-  if [ -z "$pvr" ] && [ -d /sys/module/pvrsrvkm ] && [ -e /dev/pvr_sync ] \
-     && ls /dev/dri/renderD* >/dev/null 2>&1; then
-    pvr=1
-    echo "gpu_config: pvrsrvkm loaded (no debugfs name); using module + render node"
-  fi
-fi
-if [ -n "$pvr" ]; then
-  echo "gpu_config: PowerVR (pvrsrvkm) found -> IMG blobs"
+# redroid gpu_config.sh wrapper. The host decides: a container started with
+# androidboot.product.vendor.sku=pvr declares the IMG gralloc HALs (manifest_pvr.xml), so it
+# must use the IMG blobs and start their allocator, or SurfaceFlinger waits for it forever.
+# Without that flag nothing IMG is declared, and the stock redroid logic runs (mesa / swiftshader).
+if [ "$(getprop ro.boot.product.vendor.sku)" = pvr ]; then
+  # a sanity line only: the host checked pvrsrvkm before passing the flag
+  [ -d /sys/module/pvrsrvkm ] && [ -e /dev/pvr_sync ] \
+    || echo "gpu_config: WARNING sku=pvr but no pvrsrvkm/pvr_sync in the container"
+  echo "gpu_config: sku=pvr -> IMG blobs"
   chmod 666 /dev/dri/card* /dev/dri/renderD* 2>/dev/null
   [ -e /dev/pvr_sync ] && chmod 666 /dev/pvr_sync
   setprop ro.hardware.egl POWERVR_ROGUE
@@ -92,7 +104,7 @@ if [ -n "$pvr" ]; then
   setprop vendor.redroid.pvr 1     # starts IMG allocator (redroid-pvr.rc)
   exit 0
 fi
-echo "gpu_config: no PowerVR DRM node -> stock redroid path (IMG allocator stays off)"
+echo "gpu_config: no sku=pvr -> stock redroid path (IMG HALs not declared, allocator off)"
 exec /vendor/bin/gpu_config.orig.sh "$@"
 SH
 chmod +x "$C/gpu_config.sh"
@@ -102,6 +114,14 @@ chmod +x "$C/gpu_config.sh"
 if [ "$REDROID" = 13 ]; then install -m755 "$FARM/config/redroid-13-gpu_config.orig.sh" "$C/vendor/bin/gpu_config.orig.sh"
 else install -m755 "$ROOT/vendor/bin/gpu_config.sh" "$C/vendor/bin/gpu_config.orig.sh"; fi
 install -m755 "$C/gpu_config.sh" "$C/vendor/bin/gpu_config.sh"; rm "$C/gpu_config.sh"
+
+# COPY keeps the context's modes, and Android's init skips any .rc that is group- or
+# world-writable ("Skipping insecure file"): with this PC's umask 002 the IMG allocator would
+# never be defined. Files 644, programs 755.
+find "$C/vendor" -type d -exec chmod 755 {} +
+find "$C/vendor" -type f -exec chmod 644 {} +
+find "$C/vendor/bin" -type f -exec chmod 755 {} +
+[ -z "$(find "$C/vendor" -name '*.rc' -perm /022)" ]
 
 cat > "$C/Dockerfile" <<DF
 # Only COPY, no RUN: builds on the board, or on a PC with
