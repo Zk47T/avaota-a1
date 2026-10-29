@@ -866,3 +866,37 @@ Board DTS: `&gpu { status = "okay"; };`. The GPU rail is AXP318W `dcdc4` (vendor
 **Driver line** (`drivers/gpu/drm/imagination/pvr_device.c`, `pvr_gpu_support_level()`): mainline lists only SUPPORTED cores today. A first step would be `case PVR_PACKED_BVNC(36, 56, 104, 183): return PVR_GPU_EXPERIMENTAL;`, so the driver still needs `exp_hw_support=1` but no longer calls the GPU unknown. Imagination promotes cores to SUPPORTED after Mesa conformance (as `e55fead22ff9` did for 36.52.104.182), and the K3 work will likely send this line first.
 
 **Before sending anything:** board evidence from the Zero 3W (apercel and the shim already show the GPU and firmware work with this register layout), and `make dtbs_check`. The kernel and Mesa both require AI-assisted patches to be disclosed (kernel `Documentation/process/` guidance on coding assistants; Mesa's `AGENTS.md`). Write the patches and their descriptions yourself, and use these notes as a checklist.
+
+### 16.17 What Imagination documents, what is under NDA, and why nobody has to reverse-engineer this GPU (checked 2026-10-29)
+
+**Public documentation:**
+
+| What | Scope |
+|---|---|
+| *Rogue Registers Referenced in the KM Driver* (126 pages) and *Rogue Registers Referenced in the Firmware Interface* (129 pages), marked "Public", redistribution permitted | Only the registers the open kernel driver and the firmware interface touch. Released April 2022 with the open-source announcement; zip at `developer.imaginationtech.com/wp-content/uploads/2023/12/rogue-registers-description-docs.zip`. |
+| *PowerVR Instruction Set Reference* (docs.imgtec.com, first published 2014) | Series 6XT USC instructions at assembly level, for shader developers. It says itself: "Refer to the main PowerVR ISR document (**NDA required**) for precise information regarding feature availability." |
+| Architecture and performance guides, PowerVR SDK, tools | App-developer level |
+| **The open driver code itself** | The real hardware documentation. Mesa `src/imagination`: 1,422 of about 1,780 commits on our branch are from `imgtec.com`. It holds machine-readable hardware descriptions: 16 `csbgen` XML files (PDS, VDM, CDM, PPP, texture and PBE state, plus the next-generation "volcanic" architecture), the shader ISA and encodings in `pco/pco_isa.py`/`pco_ops.py`, and per-core feature/quirk tables (`common/device_info/bxm-4-64.h` …). The kernel side has `pvr_rogue_cr_defs.h` and `pvr_rogue_fwif*.h` (about 11,800 lines in the Orange Pi copy). All MIT/GPL. |
+
+**Not public:**
+- The full ISA reference ("ISR", NDA).
+- The GPU TRM/integration manuals and the closed DDK, which SoC licensees such as Allwinner get under licence. Our Route A blobs are that DDK.
+- **The firmware source.** The firmware ships as binaries in `linux-firmware` under `LICENSE.powervr`: redistributable unmodified, "**No reverse engineering, decompilation, or disassembly of this software is permitted**", and only for use with Imagination-licensed products.
+- **The A733 user manual (1,938 pages) documents only the SoC glue:**
+  - the GPU PLL;
+  - `GPU0_CLK_REG` at `0x0B20`, a cycle-masking divider: `GPU0_CLK = source × (16 − M) / 16`;
+  - the gating/reset register and the AHB and MBUS gate switches;
+  - the PCK-600 power domains.
+  The GPU itself appears only as "IMG BXM-4-64 MC1" in the block diagram.
+
+**Why this works without reverse engineering:** since 2022 Imagination writes the open stack itself, in public:
+- the Mesa Vulkan driver (from Frank Binns' first commit, 2022-02-25);
+- the kernel `drm/imagination` driver (mainline since v6.8);
+- firmware binaries in linux-firmware;
+- Mesa CI on its own hardware, conformance submissions, Zink for GL/GLES.
+
+Their stated reasons are long-term support for industrial/IoT products and letting "developers, silicon vendors, and OEMs" control their own graphics stack. Outside contributors (Collabora, Igalia, ISCAS, Icenowy, BayLibre, CheezeCS) add SoC glue, fixes and Android integration on top. They do not decode the GPU. For the A733, the only "unknown" parts are SoC-specific (clocks, resets, power domains), and those are in Allwinner's GPL BSP and user manual.
+
+**What this means for our work:**
+- Read the open drivers and the two public register PDFs. Don't disassemble the firmware: its licence forbids it, unlike the ARC DDR-PMU work.
+- The DDK blobs in Route A come with Allwinner/Radxa's terms, so they stay out of git (`out/` is ignored).
