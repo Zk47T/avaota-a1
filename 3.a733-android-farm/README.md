@@ -29,6 +29,8 @@ Status on 2026-10-28. Everything that can be built or checked without an A733 bo
 | Blobs link inside redroid 13 arm64 (Android linker-namespace rules) | **PASS (static)** | `scripts/26`: 9 entry points, 2,419 imports, 0 problems. The negative test catches both failure kinds. |
 | redroid fit: binderfs, composer, Vulkan features, CMA, `/dev/pvr_sync`, firmware name | **checked** | section 5 |
 | Overlay image context (stock redroid + blobs) | **ready** | `out/redroid-pvr/`: COPY-only Dockerfile |
+| Route A blobs = Orange Pi's own Zero 3W Android 13 image | **byte-identical** | section 17.2: GPU libraries, gralloc, mapper, allocator, `rgx.fw` |
+| Video engine layer (Allwinner Codec2 HAL) on top of Route A | **ready, PASS (static)** | `out/redroid-pvr-c2/` from `scripts/33`: 18 entry points, 0 problems vs redroid 13 (section 17.4) |
 | AOSP vendor tree for a **source-built** redroid | **ready** | `out/aosp/vendor/powervr-a733/`: 18 Soong prebuilt modules, plus a `vendor/redroid` patch |
 | Image boots on a non-PowerVR redroid host, blobs load in real Android | **your other PC** | `scripts/35`, section 7 |
 | `insmod`, GPU firmware boot, SurfaceFlinger on PowerVR, 2 instances | **pilot board** | `scripts/40`, sections 9–11 |
@@ -87,7 +89,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   └── mesa-pvr-accept-apercel-drm-name.patch     Mesa binds to `powervr` and `apercel` DRM names
 ├── scripts/
 │   ├── env.sh                           toolchain + paths
-│   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw apercel)
+│   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw apercel; opi on request)
 │   ├── 10-build-host-kernel.sh          kernel + fragment
 │   ├── 15-package-kernel-deb.sh         -> linux-image/dtb/headers .deb
 │   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch; SECURE_CONFIG=0 = fallback without it)
@@ -101,6 +103,8 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 30-make-redroid-pvr-context.sh   overlay image context (stock redroid + blobs)
 │   ├── 31-make-aosp-vendor-tree.sh      vendor/powervr-a733 for SOURCE-built redroid
 │   ├── 32-make-redroid-mesa-context.sh  Route M overlay image context + link check vs redroid 13
+│   ├── 33-make-redroid-codec2-context.sh  Route A + video engine: Allwinner Codec2 HAL layer (section 17.4)
+│   ├── aw_android_image.py              (used by 33) read Allwinner Android .img: IMAGEWTY, sparse, super, EROFS
 │   ├── 35-test-on-redroid-host.sh       RUN ON YOUR OTHER REDROID PC
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
 │   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
@@ -280,6 +284,8 @@ Why route B is worth it:
   - 720p H.264 ≈ 0.3–0.5 of an A76; 720p HEVC more.
   - That's why each instance gets a dedicated A76.
 - Next improvement: wire the A733 video engine (`cedar-ve`, already in the kernel) into the containers through Allwinner's Android Codec2 HAL, the same way the GPU was done. It decodes 4K60 HEVC, so 2 × 720p is trivial for it.
+  - **Prepared 2026-10-29:** `scripts/33-make-redroid-codec2-context.sh` layers the HAL from Orange Pi's official image on top of Route A. The link check passes (section 17.4).
+  - **AV1 has no hardware decoder** (section 17.5).
 
 **RAM per instance** (redroid 13, no GMS; rough):
 
@@ -399,6 +405,21 @@ Density levers for our A733 boards, in order of gain:
   - One review saw DDR controller errors and shutdowns under a heavy 8B LLM load: soak-test before trusting it.
   - One board failing takes down 8 instances, against 2 on an A733.
 
+**Decision (user, 2026-10-29): no CIX P1, no big-RAM boards; scale out with small 6 GB A733 boards.**
+- **Why not CIX P1:**
+  - After the 2026 memory price rise, 16–32 GB boards cost far more per instance.
+  - The CIX P1 is a whole new platform: vendor kernel, Mali blobs, no mainline GPU.
+  - One board would carry 8 instances.
+- **Why 3 × A733 beats 1 × RK3588:**
+  - **3 × A733 for 6 instances:** 3 × Zero 4 6 GB = 7.2 tr, so 1.2 tr per instance.
+  - **RK3588 at its 3-instance limit:** 1.6–2.2 tr per instance (5 Pro 8 GB to 5 Plus 8 GB).
+  - **Extras:** each board also needs a 5 V/3 A supply, a microSD card and a fan. The A733 farm needs three sets instead of one, and still stays cheaper per instance.
+- **What the A733 also gives:**
+  - A failure takes down only 2 instances.
+  - The boards are identical, so the setup is the same everywhere.
+  - Each instance gets its own pinned A76.
+- **The gate is unchanged:** board day must show 2 smooth instances on one A733 (BOARD-DAY). The video engine (section 17) can only lower the CPU cost from there.
+
 ### 8.3 Which A733 board for the farm; the Zero 2W expansion board does not fit the Zero 3W
 
 **The Zero 2W expansion board is not compatible with the Zero 3W.** Don't plug it in.
@@ -512,7 +533,9 @@ Practical limit: SD-sniffer JTAG uses the **microSD pins**, so it only works whi
 A build becomes necessary only if:
 1. Route A fails at runtime in a way only a vendor build fixes. `scripts/31-make-aosp-vendor-tree.sh` already prepares `vendor/powervr-a733` for a source-built redroid.
 2. Route M's gbm_gralloc + Zink allocation fails and needs minigbm `gbm_mesa` with mapper 4: a vendor-only redroid build (section 16.11).
-3. The Cedar video engine has to be wired in through a Codec2 HAL built against redroid's tree. Overlaying Allwinner's prebuilt Codec2 service from the Android 13 SDK may avoid this; untested.
+3. The Cedar video engine has to be wired in through a Codec2 HAL built against redroid's tree.
+   - Overlaying Allwinner's prebuilt Codec2 service avoids this for Route A. It comes from Orange Pi's official Zero 3W Android 13 image, it passes the static link check, and `scripts/33` builds the overlay (section 17.4). It has not run yet.
+   - Route M would need an allocator change first.
 4. Route M moves to an Android 14+ base.
 
 A full AOSP 13 build needs roughly 250+ GB of disk and 32–64 GB RAM, so it belongs on the build PC; this PC has 15 GB RAM and 63 GB free.
@@ -535,6 +558,9 @@ A full AOSP 13 build needs roughly 250+ GB of disk and 32–64 GB RAM, so it bel
 | BayLibre/android_device_spacemit_k3 | android-17 | 06c4578ef (2026-09-18); firmware file from a09d86fe4 |
 | BayLibre/android_device_spacemit_common | android-16 | 755c243bb (2026-06-15) |
 | Imagination fw for 36.56.104.183 (via BayLibre) | — | fw 1.1 build 6976702, 131,072 B, sha256 `1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2` |
+| gitlab aw_android13/platform/tidy/platform/hardware/aw/libcodec2 | a733-radxa-v1.0 | 7ac742728 (2025-07-18) |
+| Orange Pi Zero 3W Android 13 v1.0 image (Drive `1pkdnQSu…`) | — | `OrangePiZero3W_A733_Android13_v1.0.tar.gz`, sha256 `8081ff47…` (scripts 00 `opi`, 33) |
+| Orange Pi Zero 4 Android 16 v1.0 image (Drive `1utu_-tK…`) | — | `OrangePiZero4_A733_Android16_v1.0.tar.gz`, sha256 `f5a491e2…` (reference: DDK 25.1) |
 
 Licences:
 - The GPU kernel driver is dual MIT/GPL.
@@ -560,6 +586,11 @@ Licences:
 - apercel on the Zero 3W (section 16.10): report https://github.com/TumRedSun/apercel/issues/1, fork https://github.com/CheezeCS/apercel, Armbian integration https://github.com/CheezeCS/armbian-a733-gpu, Mesa transform feedback for PowerVR: mesa!44385
   - openRuyi K3 firmware issue: https://github.com/openRuyi-Project/kernel-team-tools/issues/29
   - Phoronix BXM-4-64 firmware: https://www.phoronix.com/news/IMG-PowerVR-BXM-4-64-FW
+- Section 17:
+  - Orange Pi service pages, with the Drive folders for manuals, schematics and Android images: http://www.orangepi.org/html/hardWare/computerAndMicrocontrollers/service-and-support/Orange-Pi-Zero-3W.html, `…/Orange-Pi-Zero-4.html`, `…/Orange-Pi-4-Pro.html`
+  - Allwinner Codec2 HAL: https://gitlab.com/aw_android13/platform/tidy/platform/hardware/aw/libcodec2
+  - Meta on AV1 and dav1d: https://engineering.fb.com/2023/02/21/video-engineering/av1-codec-facebook-instagram-reels/, https://www.streamingmedia.com/Articles/News/Online-Video-News/Metas-David-Ronca-Talks-Benchmarking-and-Deploying-AV1-in-the-Android-Ecosystem-168126.aspx
+  - DDK 25.1 RTM2 (Android 16, Vulkan 1.4): https://design-reuse.com/blog/56188-imagination-gpus-now-support-vulkan-1-4-and-android-16
 - AXP318W (= vendor AXP8191 / AXP819, section 16.5): https://patchew.org/linux/20260710-axp318-regulator-v2-0-ee5f1c56b49f@baylibre.com/, U-Boot https://lists.denx.de/pipermail/u-boot/2026-January/606579.html
 
 ## 16. Mainline status and upstream commits (checked 2026-10-28; GPU, PMIC and firmware re-checked 2026-10-29)
@@ -1023,3 +1054,149 @@ Their stated reasons are long-term support for industrial/IoT products and letti
 **What this means for our work:**
 - Read the open drivers and the two public register PDFs. Don't disassemble the firmware: its licence forbids it, unlike the ARC DDR-PMU work.
 - The DDK blobs in Route A come with Allwinner/Radxa's terms, so they stay out of git (`out/` is ignored).
+
+## 17. Hardware video, Orange Pi's own Android images, and the documents (checked 2026-10-29)
+
+The CPU limits the farm (section 8.2), and video decoding is the biggest part of that load. This section checks what software exists to move that work to the A733 video engine. The sources are Orange Pi's official Android images and documents, and Allwinner's documents in `2.docs`.
+
+### 17.1 What Orange Pi publishes for each A733 board
+
+| Board | User manual | Schematic | Android image | Android source |
+|---|---|---|---|---|
+| Zero 3W | v1.0 (2026-05-15, 281 pages) | V1.2 PDF + DXF (2026-04-20) | **Android 13** v1.0, 1.3 GB (plus an LCD variant) | `a733_android13.tar.gz00`–`08` + a `sys_config` patch (2026-10-29) |
+| Zero 4 | v1.0 (2026-09-20, 258 pages) | V1.0 and V1.5 zips (schematic PDF + DXF) | **Android 16** v1.0, 1.8 GB | only the `sys_config` patch (2026-10-29) |
+| 4 Pro | v1.4 (2025-11-28) | V1.3.2 (2026-01-09) | Android 13 v1.0, 1.3 GB | `a733_android13` tarballs (2026-01-29) |
+
+- **Where they are.** The links are Google Drive folders on the orangepi.org service pages. `scripts/00-fetch-sources.sh opi` downloads them, all sha256-pinned:
+  - the manuals and schematics go to `2.docs/orangepi-a733/`, which is git-ignored;
+  - the Zero 3W and Zero 4 images go to `out/cache/opi-android/`.
+- **Flashing.** The Android images need PhoenixCard 4.2.8 on Windows (manual §2.7–2.9). Orange Pi has no Linux tool.
+- **Android 16 on the Zero 4.** The manual's feature table lists the GPU, Gigabit Ethernet, the fan, UFS and eMMC as OK.
+- **Zero 4 schematic V1.5:**
+  - YT8531C Ethernet PHY and AXP318 PMIC.
+  - eMMC and UFS footprints, both "default blank", meaning not fitted.
+  - The fan header is switched by a MOSFET (WNM2021) from `FAN_EN_PWM`. That net is on a PD-bank pin that has a PWM0 function, so the fan speed can be PWM-controlled. Read the schematic page to confirm whether the pin is PD5 or PD6.
+- **Zero 3W schematic V1.2:** AXP318, eMMC and UFS footprints, LPDDR5 32×1.
+
+### 17.2 Inside the two official images
+
+I unpacked both images here with `scripts/aw_android_image.py`, a pure-Python reader of my own. It reads Allwinner's IMAGEWTY container, the sparse super image, the dynamic partitions and EROFS (including LZ4). It is checked two ways: two independent extractions are identical, and the GPU libraries match the Radxa SDK byte for byte.
+
+| | Zero 3W, Android 13 v1.0 | Zero 4, Android 16 v1.0 |
+|---|---|---|
+| Build | system 13 `TQ2A.230405.003.B2`, security patch 2023-08-05, built 2026-03-25 | system 16 `BP2A.250805.005`, patch 2025-12-05, **on an Android 15 vendor** (SDK 35, device `a733-perf1`), built 2026-08-25 from Allwinner's "T736 android15" longan tree (path inside the GPU module) |
+| Kernel | 5.15.119 | 6.6.102-4k (Android clang 18) |
+| GPU DDK | 24.2@6643903 | **25.1@6794074** |
+| GPU userspace | **byte-identical to the Route A kit**: `libsrv_um`, `libGLESv2`, `libglslcompiler`, `libusc`, gralloc (renamed `gralloc.jupiter.so`), Vulkan (`vulkan.jupiter.so`), mapper 4.0, allocator 4.0, `rgx.fw` `11e08779…` | a different build; IMapper 5 (`mapper.powervr.so`); `rgx.fw` `6bd67009…` |
+| `pvrsrvkm` | no `sunxi_secure_config` strings | contains `sunxi_secure_config` |
+| Video | Codec2 HAL `android.hardware.media.aw.c2@1.0-service`, CedarC v2.0.12 | the same HAL, CedarC v2.0.8 |
+| VE driver `sunxi-ve.ko` | for 5.15 | for 6.6; its ioctl and log strings match our 6.6.98 `sunxi-ve.ko` except three debug lines |
+
+What follows from this:
+1. **Route A's userspace is exactly what Orange Pi ships and runs natively on the Zero 3W.** Route A's open risks are therefore in the container, not in the blobs:
+   - there is no Allwinner hwcomposer;
+   - two instances share one driver.
+2. **Secure reset.**
+   - Orange Pi's own 5.15 Android driver runs without `sunxi_secure_config()`; the newer 6.6 driver calls it.
+   - Both of our builds stay relevant: the default (with the call) and the `-nosecure` fallback in BOARD-DAY's failure table.
+3. **A newer Route A exists**, with DDK 25.1 on kernel 6.6 and an Android 15 vendor.
+   - Imagination's notes say 25.1 RTM2 adds Android 16 and Vulkan 1.4.
+   - It would pair with redroid 15 or 16; the redroid 16 base is already cached.
+   - **It is blocked on the kernel-driver source:**
+     - Allwinner's public trees stop at 24.2 (6603887 and 6643903).
+     - The image's module is built for its own 6.6.102-4k Android kernel, not our 6.6.98.
+     - The driver is MIT/GPL, so asking Orange Pi for the Android 16 kernel source (`longan/bsp/modules/gpu/img-bxm`) is a fair GPL request.
+
+### 17.3 The video engine
+
+Sources:
+- A733 datasheet V1.01 §3.5;
+- Allwinner's decoder guide, table 2-1, which lists two engines for the A733 (VE0 + VE1);
+- the Orange Pi 6.6 device tree;
+- the vendor `media_codecs_allwinner_video.xml`.
+
+| | Decoder engine | Encoder engine |
+|---|---|---|
+| Node and device | `ve@1c0e000`, `/dev/cedar_dev`, power domain VE_DEC | `ve2@1c10000`, `/dev/cedar_dev_ve2`, VE_ENC |
+| Datasheet | H.265 / VP9 / AVS2 up to 8K@24, H.264 up to 4K@30, VP8 / MPEG-1/2/4 / H.263 / AVS / VC-1 / MJPEG up to 1080p60. **No AV1.** | H.265 / H.264 up to 4K@30, MJPEG 4K@15 |
+| Declared to Android | H.264: 489,600 macroblocks/s in total (1080p60); HEVC: 1,944,000 (4K60); VP9: 1080p60. `concurrent-instances` 16 | H.264: 1080p60 class, performance point 720p30, 16 instances; HEVC: 4 instances |
+| As 720p30 streams (108,000 macroblocks/s each) | H.264 ≈ 4.5, HEVC ≈ 18 | H.264 ≈ 4.5 |
+
+- **AV1 is software.** `c2.allwinner.av1.decoder` is Google's libgav1 decoder under another name (`C2SoftGav1Dec`, 1080p30 at most), not hardware.
+- **Sharing between containers.** Both containers can open the same device node, and their frames are time-sliced:
+  - The driver serialises jobs per engine with kernel mutexes: `IOCTL_GET_LOCK` takes `lock_vdec` or `lock_venc`.
+  - It reference-counts the clocks (`IOCTL_ENGINE_REQ`).
+  - It maps any dma-buf through the VE IOMMU (`IOCTL_GET_IOMMU_ADDR`).
+- **Host kernel.** Everything the HAL opens is already in our kernel package:
+  - `sunxi-ve.ko` (`CONFIG_AW_VIDEO_ENCODER_DECODER=m`);
+  - `deinterlace.ko` (`CONFIG_AW_DI=m`);
+  - `/dev/sunxi_soc_info` (`CONFIG_AW_SYS_INFO=y`);
+  - `/dev/dma_heap/system`, where CedarC allocates. It does not use ION.
+
+### 17.4 The Codec2 HAL inside redroid (Route A only): `scripts/33-make-redroid-codec2-context.sh`
+
+**The source is public:** `aw_android13/platform/tidy/platform/hardware/aw/libcodec2` at `7ac74272`, fetch group `ref`.
+- Decoders: `c2.allwinner.{avc,hevc,vp9,vp8,mpeg1,mpeg2,mpeg4,h263,s263,xvid,vc1,mjpeg}.decoder`.
+- Encoders: `c2.allwinner.{avc,hevc,mjpeg}.encoder`.
+- Plus secure variants.
+
+**What script 33 does:**
+- It takes these files from the official Zero 3W image:
+  - the service;
+  - the vendor-only libraries it needs: its library closure minus what a redroid vendor process already sees (LLNDK, VNDK, redroid's `/vendor`);
+  - the 16 decoder plugins that `libvideoengine` finds by scanning `/vendor/lib64` and loads with `dlopen` (they export `CedarPluginVDInit`);
+  - the rc file, the VINTF fragment, the media XMLs and the seccomp policy.
+- It builds a layer `FROM redroid-pvr:13`: 65 libraries, 8.9 MB.
+- **Static link check against the real redroid 13 image: 18 entry points, 0 problems.** The service's load group has 145 libraries and 4,159 imports.
+
+**Two settings the native image doesn't need**, set by `redroid-cedar.rc`:
+- **`vendor.codec2.disable.afbc=1`.** The decoder is built with `CONF_AFBC_ENABLE=2`, so it writes Arm-AFBC compressed frames for video of 640×480 and up.
+  - On the vendor image, the display engine reads those frames.
+  - In redroid, SurfaceFlinger composes on the PowerVR, which cannot sample AFBC.
+  - Without this setting, expect green or garbled video.
+- **`vendor.codec2.disable.aisr=1`**, because the container has no NPU.
+
+The rc file also runs `chmod 0666` on `/dev/cedar_dev*`, `/dev/deinterlace` and `/dev/sunxi_soc_info`.
+
+**A/B switch:** `setprop vendor.codec2.disable.hw 1`, then restart the service. The store drops every hardware component, and apps fall back to `c2.android.*`.
+
+**Why Route A only:**
+- The HAL takes the frame's dma-buf from `native_handle->data[0]` and a metadata fd from `data[1]` (`graphics-sunxi.h`: `SUNXI_SHARE_FD`, `SUNXI_METADATA_FD`). That is the layout of Allwinner's IMG gralloc.
+- Route M's gbm_gralloc handle carries only one fd (`prime_fd`), so its `data[1]` is not an fd.
+- Route M would need a small allocator change (a second fd) or a shim in the HAL.
+- **Route M still plays software-decoded video:**
+  - Mesa's PowerVR driver samples NV12 and 3-plane YUV (`G8_B8R8_420`, `G8_B8_R8_420`, `samplerYcbcrConversion`).
+  - Zink exposes `GL_OES_EGL_image_external_essl3` (shim probe, 16.14).
+
+**On the board:** `CODEC2=1 ./40-board-setup.sh run` loads `sunxi-ve` and `deinterlace` and builds `redroid-pvr-c2:13`. See BOARD-DAY step 9.
+
+### 17.5 Which apps gain
+
+Hardware decoding helps only apps that decode through MediaCodec, and only for codecs the VE has.
+
+| App or use | Effect of the video engine |
+|---|---|
+| **Instagram / Facebook** | Meta moved much of its video to AV1 and decodes it in the app with its own dav1d software decoder. Meta's 2023 numbers: dav1d plays 720p30 in real time on most phones. Later, AV1 was about half of all watch time. The VE has no AV1, so **AV1 reels stay on the CPU**. H.264 and VP9 streams, which still go to devices that decode AV1 badly, would use the VE. |
+| **TikTok** | Unknown here. Measure it on the board: `adb logcat -d \| grep 'Created component'` while scrolling (BOARD-DAY step 9 or 10). |
+| **Screen streaming** (scrcpy, screenrecord) | They ask for a `video/avc` encoder, and with the layer Android lists `c2.allwinner.avc.encoder` first. Two 720p30 streams are well within the engine (about 4.5). |
+
+So the gain per instance ranges from large (H.264/HEVC feeds, scrcpy) to nothing (AV1). It is a board-day measurement, not a promise, and it doesn't change the plan of 2 instances per board.
+
+### 17.6 Allwinner documents in `2.docs` that matter for the farm
+
+`2.docs` holds the AIoT Linux SDK v1.5.0 guides (119 software PDFs) and the A733 hardware set: datasheet V1.01, user manual V1.00, hardware and PCB design guides, thermal design guide, reference schematics, IBIS.
+
+- **Thermal policy for the A733** (`Linux_Thermal_开发指南` v3.3, table 2-5):
+  - **CPU (IPA):** throttling starts at **70 °C**, the target is 90 °C, and the board shuts down at 110 °C.
+  - **GPU and NPU:** step down above 90 °C.
+  - **Idle injection** above 100 °C: A55 cores 2–5 up to 50 %, the A76 cores up to 100 %.
+  - **So keep a farm board under 70 °C at load, or it loses clock speed.**
+  - The A733 thermal design guide V1.1 gives an indoor ambient of −5 to 55 °C and a 10–15 °C air temperature rise inside an enclosure.
+- **GPU monitoring** (`Linux_GPU_开发指南` v1.8, §4.5). These are DDK nodes for Route A; apercel and Route L use DRM debugfs instead.
+  - `/proc/pvr/version`: DDK version and GPU.
+  - `/proc/pvr/status`: GPU state and utilisation.
+  - `/proc/pvr/memtrack_stats`: GPU memory per process, which shows each instance's share.
+  - DVFS through devfreq: `/sys/class/devfreq/1800000.gpu/`.
+- **Video:** the Decoder (37 pages), Encoder (45 pages) and CedarX (42 pages) guides cover the libcedarc API and the `/dev/cedar_dev` checks. The A733 is listed with VE0 + VE1.
+- **Docker guide:** generic (`docker.io` on Debian, `check-config.sh`). It adds nothing beyond section 5.
+- **Missing from all of them:** the VE register map. As with the GPU (16.17), the user manual documents only the SoC glue.

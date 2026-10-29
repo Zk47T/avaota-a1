@@ -99,6 +99,33 @@ Only the board can decide:
    - Save: `adb -s <ip>:5557 logcat -d > ~/farm/route-m-logcat.txt`, the `dumpsys SurfaceFlinger` output, and `dmesg | tail -100`.
    - Undo afterwards: `sudo docker rm -f android-m; sudo rm /etc/modprobe.d/farm-route-m.conf; sudo mv ~/farm/pvrsrvkm.conf /etc/modules-load.d/ && sudo reboot`.
 
+9. **Optional, once Route A runs: the video engine in the containers** (README 17.4).
+   - **Build PC:** `./scripts/33-make-redroid-codec2-context.sh`, then copy `out/redroid-pvr-c2` to `~/farm/` like the other contexts.
+   - **Board:** `sudo docker rm -f android1 android2 && CODEC2=1 ./40-board-setup.sh run`. This loads `sunxi-ve` and `deinterlace` and builds `redroid-pvr-c2:13`.
+   - **Checks:**
+     - Host: `ls -l /dev/cedar_dev /dev/cedar_dev_ve2`.
+     - The HAL is running: `adb -s <ip>:5555 shell ps -A | grep media.aw.c2`.
+     - The HAL registered: `adb -s <ip>:5555 shell lshal | grep media.c2` should list `IComponentStore/default`.
+     - AFBC is off: `adb -s <ip>:5555 shell getprop vendor.codec2.disable.afbc` must print `1`. With AFBC on, video turns green or garbled.
+     - Encoder: `adb -s <ip>:5555 shell screenrecord --time-limit 5 /sdcard/t.mp4`, then `adb -s <ip>:5555 logcat -d | grep -E 'Created component|c2\.allwinner'` should show `c2.allwinner.avc.encoder`.
+     - Apps: open TikTok and Instagram, scroll for a minute, and run the same `logcat` grep. It shows which decoder each app picked: `c2.allwinner.*` means hardware; `c2.android.*` or nothing (an in-app decoder such as Meta's dav1d for AV1) means CPU.
+   - **A/B comparison:**
+     - Run `sudo docker stats --no-stream` while both instances play video.
+     - Switch the hardware codecs off: `adb -s <ip>:5555 shell 'setprop vendor.codec2.disable.hw 1; stop android-hardware-media-aw-c2-hal-1-0; start android-hardware-media-aw-c2-hal-1-0'`.
+     - Restart the app and run `docker stats` again.
+   - **Save:** the logcat grep and both `docker stats` outputs.
+
+10. **Optional, any time, on a spare microSD card (not the farm card): native baseline.**
+    - **Flash:** Orange Pi's own Zero 3W Android 13 image (`OrangePiZero3W_A733_Android13_v1.0`; `scripts/00-fetch-sources.sh opi`) with PhoenixCard 4.2.8 on Windows, as manual §2.7 describes. Its GPU blobs are the same as Route A's (README 17.2).
+    - **Run:** install TikTok and Instagram, use each for five minutes, then save:
+      - `adb shell top -b -n 1 -m 15`;
+      - `adb shell dumpsys gfxinfo <package>`, for frame times;
+      - the codec grep from step 9.
+    - **What it gives:**
+      - one Android with hardware video and Allwinner's own compositor, the best case a container can approach;
+      - whether the apps use `c2.allwinner.*` at all;
+      - whether the vendor GPU stack stays stable with a live compositor.
+
 ## 4. How to read the result
 
 - **PASS** everything in section 2 of the report, `sys.boot_completed=1`, and `ro.hardware.egl=POWERVR_ROGUE`: the GPU is in use.
@@ -149,6 +176,9 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - For each driver and firmware tried: `~/farm/apercel-fw1.1.dmesg`, `~/farm/route-l-fw1.0.dmesg` and, if step 4c ran, `~/farm/route-l-fw1.1.dmesg`, plus one line saying which file is installed at the end.
 - The PD 5 and PD 6 readbacks before and after each load (they decide whether an upstream A733 GPU node needs one power domain or two, README 16.10).
 - If step 8 ran: `~/farm/route-m-logcat.txt`, the SurfaceFlinger dump, and which image (base or apercel variant) booted.
+- If step 9 ran: the codec grep per app and the two `docker stats` outputs (hardware on and off).
+- If step 10 ran: `top`, `gfxinfo` and the codec grep from the native Android image.
+- Board temperature under load: `cat /sys/class/thermal/thermal_zone*/temp`. The CPU starts throttling at 70 °C (README 17.6).
 - On a PC with internet, run `python3 -I scripts/60-mainline-watch.py` (README 16.9) and note anything marked `*` or `NEW`. Upstream may have moved since 2026-10-29.
 
 ## 7. Not in scope for this session
@@ -160,6 +190,12 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 
 - **Radxa A733 Bullseye KDE image** (`radxa-a733_bullseye_kde_r2.output_512.img.xz`, sha256 `1b5604fe…`, kernel 5.15.147-14-a733). It ships a prebuilt Linux GPU stack: the DKMS package `img-bxm-dkms` 0.1.0-2, a built `pvrsrvkm.ko.xz` for its kernel (DDK 24.2@6603887, Linux WS build), the IMG user-space libraries (24.2.6603887), and firmware 36.56.104.183. Its `rgx.sh` is byte-identical to the kit's; its `rgx.fw` is not (`43eb5d05…` against the kit's Android copy `11e08779…`). Its EGL is Mesa's. Its sunxi layer defines the DRM_CTRL register, but I found no write to it and no SMC secure-release call, so it doesn't settle the secure-reset question. Use it to compare the Linux driver and its start sequence. Do not use it as a base: the kernel is 5.15.
 - **Orange Pi Android 13 pack** (`OrangePiZero3W_A733_Android13_lcd_v1.0`): Android-flavour `pvrsrvkm`, DDK 24.2@6643903 strings, firmware 36.56.104.183, kernel 5.15.119, `buildvariant=userdebug`. Use it for the Android blobs and the device tree. Do not flash it to the farm.
+  - The non-LCD `OrangePiZero3W_A733_Android13_v1.0` was unpacked on 2026-10-29. Its GPU userspace and `rgx.fw` are byte-identical to Route A's kit, and it is the source of the Codec2 layer (README 17.2, 17.4).
+  - It is fine on a spare card for step 10.
+- **Orange Pi Zero 4 Android 16 image** (`OrangePiZero4_A733_Android16_v1.0`):
+  - It runs an Android 16 system on an Android 15 vendor, with kernel 6.6.102 and **DDK 25.1@6794074** (README 17.2).
+  - It is the reference for a newer Route A. That route needs the 25.1 kernel-driver source, which is not public.
+  - It is a Zero 4 build, so don't flash it to the Zero 3W.
 - **Allwinner libgpu** (`tina5.0_aiot/product/linux/external/libgpu`, commit `144487e8`): the open-source firmware `powervr/rogue_36.56.104.183_v1.fw` (fw 1.0) for Route L, and the DDK 6603887 userspace libraries (for the DDK kernel driver, not Route L). Mirror it with the rest.
 - **CheezeCS/armbian-a733-gpu** (`src/armbian-a733-gpu` @ `6960be50`, fetch group `apercel`): Armbian for the Zero 3W with apercel, fw 1.1 and Mesa 26.3. Its `docs/troubleshooting.md` lists every problem they hit on this board. Its `files/mesa/a733-build-mesa` builds Mesa with the apercel patch on the board or cross on amd64 Debian trixie.
 - **BayLibre SpacemiT K3 AOSP** (`src/baylibre-k3` @ `06c4578e`, `src/baylibre-common` @ `755c243b`, fetch group `fw`): Android 17 on the same GPU with upstream `drm/imagination` + Imagination fw 1.1 + Mesa (PowerVR Vulkan + Zink) + minigbm `gbm_mesa`. It is the template for Route M (README 16.8). It is build-green but not yet validated on hardware, and it is riscv64, so nothing in it runs here as is.
