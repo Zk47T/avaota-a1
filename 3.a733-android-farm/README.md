@@ -100,6 +100,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── mesa_glver.c, mesa_glsmoke.c     (used by 24: highest GL/GLES context; GLES 3.1 smoke test)
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
+│   ├── 27-build-host-mesa.sh            host Mesa for the board (trixie arm64): /opt/mesa-farm, or VARIANT=cheezecs (section 16.18)
 │   ├── redroid_link_check.py            (used by 26)
 │   ├── 30-make-redroid-pvr-context.sh   overlay image context (stock redroid + blobs)
 │   ├── 31-make-aosp-vendor-tree.sh      vendor/powervr-a733 for SOURCE-built redroid
@@ -108,6 +109,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── aw_android_image.py              (used by 33) read Allwinner Android .img: IMAGEWTY, sparse, super, EROFS
 │   ├── 35-test-on-redroid-host.sh       RUN ON YOUR OTHER REDROID PC
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
+│   ├── 41-gpu-open-tests.sh             board: apercel / Route L / fw 1.1 tests with insmod, evidence per test (section 16.18)
 │   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
 │   ├── 50-board-report.sh               board: PASS / WARN / FAIL report + evidence folder
 │   ├── 55-storage-report.sh             board: space per item, GB/day written to flash, eMMC wear (section 8.4)
@@ -115,6 +117,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 ├── src/   (git-ignored; 00-fetch-sources.sh)
 └── out/   (git-ignored; contains vendor blobs, do not publish)
     ├── fw/1.0, fw/1.1                   the two GPU firmware files, staged for the board (BOARD-DAY step 3)
+    ├── host-mesa/                       27-build-host-mesa.sh: mesa-farm-arm64.tar.gz, a733-mesa_*.deb, SHA256SUMS.*
     └── mainline-watch/<date>.json       60-mainline-watch.py snapshots (per PC; baseline values in 16.9)
 ```
 
@@ -757,7 +760,7 @@ Five ways to drive this GPU on our board, ordered by evidence and by how much ea
 | **M** open stack (planned) | Route L's driver, or `apercel` / mainline `drm/imagination` (`exp_hw_support=1` until the BVNC is listed) | Imagination **fw 1.1 build 6976702** (`src/firmware/imagination-fw-1.1/`, sha256 `1db1c399…`) | redroid overlay with Mesa 26.3 PowerVR Vulkan + Zink (BayLibre's Android commits rebased), redroid's own gbm_gralloc and fake composer (section 16.11) | Plan only. Start after apercel or Route L shows the GPU probes and its firmware boots. |
 
 **Route L, step by step.** Step 1 runs on the build PC.
-1. Build PC, done 2026-10-28 in a copy of the kit tree (`/mnt/project/route-l-build/linux-orangepi-6.6`; the kit tree itself was not changed). `CONFIG_AW_DRM_POWERVR=m` and `make olddefconfig` add three helper modules that the kit's `.config` did not have: `CONFIG_DRM_EXEC=m`, `CONFIG_DRM_GEM_SHMEM_HELPER=m` and `CONFIG_DRM_SCHED=m`. Five config lines change in all (`out/route-l/config-delta.txt`). Then `make modules_prepare`, `make modules` and `make M=bsp/drivers/gpu/imagination modules` all exit 0. The one warning is an unused variable in the BSP's `drm_gpuvm.c`. `powervr.ko` has vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`, needs `gpu-sched`, `drm_shmem_helper` and `drm_exec`, and matches `img,gpu` (`of:N*T*Cimg,gpuC*`). MODVERSIONS is off in the kit config, so a load checks vermagic only. The four modules and their hashes are in `out/route-l/` on the build PC (`SHA256SUMS`). Not run on hardware yet.
+1. Build PC, done 2026-10-28 in a copy of the kit tree (since deleted; the kit tree itself was not changed; build logs in `logs/2026-10-28-route-l-build/`). `CONFIG_AW_DRM_POWERVR=m` and `make olddefconfig` add three helper modules that the kit's `.config` did not have: `CONFIG_DRM_EXEC=m`, `CONFIG_DRM_GEM_SHMEM_HELPER=m` and `CONFIG_DRM_SCHED=m`. Five config lines change in all (`out/route-l/config-delta.txt`). Then `make modules_prepare`, `make modules` and `make M=bsp/drivers/gpu/imagination modules` all exit 0. The one warning is an unused variable in the BSP's `drm_gpuvm.c`. `powervr.ko` has vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`, needs `gpu-sched`, `drm_shmem_helper` and `drm_exec`, and matches `img,gpu` (`of:N*T*Cimg,gpuC*`). MODVERSIONS is off in the kit config, so a load checks vermagic only. The four modules and their hashes are in `out/route-l/` on the build PC (`SHA256SUMS`). Not run on hardware yet.
 2. Board: install the firmware with `sudo install -D -m 0644 rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). Keep the four modules in `~/farm/route-l/`: don't copy them into `/lib/modules` or run `depmod`, or udev autoloads an `img,gpu` driver at every boot and Route A loses the GPU (BOARD-DAY 4a).
 3. Board: unload `pvrsrvkm` or apercel if loaded, then `insmod` `gpu-sched.ko`, `drm_exec.ko`, `drm_shmem_helper.ko` (skip any already loaded) and `powervr.ko`.
 4. Check `dmesg` for `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`. Then `ls /dev/dri` (card0 and renderD128) and `cat /sys/kernel/debug/dri/*/name` (expect `powervr`).
@@ -873,6 +876,13 @@ What to watch for, in order of value to us:
 5. **A `sun60i` DTS**: the start of a mainline Zero 3W DTS.
 
 Not covered by the script: lore.kernel.org and gitlab.freedesktop.org (both block scripts with a bot check). Check Mesa main's `pvr_physical_device.c` and Imagination's linux-firmware fork in a browser.
+
+**Second run, 2026-10-29 evening:** no tracked value changed.
+- Mainline's BVNC list came back empty while linux-next still lists the three supported cores: a fetch glitch, not a removal.
+- New on patchwork the same day:
+  - "drm/imagination: retry runtime idle when firmware is not yet idle". It touches the runtime-PM path that apercel's `no_autosuspend=1` avoids, so it may be the upstream fix for that workaround.
+  - "[v4] drm/imagination: Align rogue_fwif_hwrtdata to 64 bytes".
+  - v2 of the META firmware-header series.
 
 
 ### 16.10 Already proven on a Zero 3W: apercel + Imagination fw 1.1 (checked 2026-10-29)
@@ -1145,6 +1155,47 @@ Their stated reasons are long-term support for industrial/IoT products and letti
 **What this means for our work:**
 - Read the open drivers and the two public register PDFs. Don't disassemble the firmware: its licence forbids it, unlike the ARC DDR-PMU work.
 - The DDK blobs in Route A come with Allwinner/Radxa's terms, so they stay out of git (`out/` is ignored).
+
+### 16.18 Board-day host tools: a prebuilt host Mesa (script 27) and the GPU test script (script 41) (2026-10-29)
+
+**Host Mesa without building on the board.** BOARD-DAY 4a used to build Mesa on the board, which takes 30–45 minutes. `scripts/27-build-host-mesa.sh` cross-builds it on the build PC instead, in a Debian trixie container that has the board's library versions, and then checks it under qemu.
+
+- **Default variant: our Route M tree** (`src/mesa`: 26.3 + BayLibre's Android series + the patch that accepts both DRM names).
+  - Configured for a headless Linux host: EGL (surfaceless and device platforms), GBM, GLES/GL, PowerVR Vulkan and Zink.
+  - It reuses script 23's host compiler tools, so its precompiled shaders are identical to Route M's.
+  - Output: `out/host-mesa/mesa-farm-arm64.tar.gz` (8.3 MB), which unpacks to `/opt/mesa-farm`. It contains `bin/mesa-farm-run`, which sets the library, driver and ICD paths so the system Mesa stays untouched, plus arm64 builds of the test programs `mesa_glver` and `mesa_glsmoke`.
+  - It binds both DRM names, so one package serves apercel (4a) and Route L (4b). It is also the same driver code Route M will run inside the container.
+  - **Checked** in an arm64 trixie container under qemu, with Mesa's PowerVR drm-shim at BVNC 36.56.104.183:
+    - a Vulkan 1.2 device, `PowerVR B-Series BXM-4-64 MC1`;
+    - GLES 3.1 and GL 3.2 core through Zink;
+    - the GLES 3.1 smoke test runs 120 frames OK.
+
+    That matches the x86 shim results in 16.14. Real rendering still needs the board.
+- **`VARIANT=cheezecs`: CheezeCS's own `a733-build-mesa --cross --deb`.** Mesa 26.3.0-rc2 plus apercel's patch, with X11 and Wayland, packaged as `a733-mesa_*.deb` and installed to `/opt/mesa-apercel`. It binds only `apercel`. It is kept as the known-good reference from the Zero 3W report (16.10).
+  - Built 2026-10-29: `a733-mesa_26.3.0~rc2+apercel.751f3c5c_arm64.deb` (5.7 MB).
+  - Its Vulkan driver contains the `apercel` DRM name.
+  - It depends on the X11 and Wayland client libraries, which `apt install ./a733-mesa_*.deb` pulls in.
+  - Not shim-tested: the package carries no drm-shim.
+- **Board runtime needs:** `libvulkan1` (the loader) and `vulkan-tools` (for `vulkaninfo`). The other libraries (libdrm2, libexpat1, zlib1g, libzstd1) are in the server image.
+- **Three build problems, fixed in the script:**
+  - Mesa's meson wants an `nm`, and the minimal trixie container has none. The cross file now names `aarch64-linux-gnu-nm`, and the image adds `binutils`.
+  - `meson install` creates no `bin/` folder with these options, so the script creates it.
+  - Linking the test programs needs `-rpath-link` to the staging libraries, because `libEGL` depends on `libgallium` and `libgbm`.
+
+**`scripts/41-gpu-open-tests.sh` runs on the board.** One command per BOARD-DAY step: `apercel` (4a), `routel` (4b), `routel-fw11` (4c), and `unload`.
+- **Guard rails.** It refuses to run on another kernel, with `pvrsrvkm` loaded (never `rmmod` that on a live GPU), or with the other open driver loaded. It checks the modules against `SHA256SUMS`, and the firmware against its hash, before touching anything.
+- **Reversible.** It loads with `insmod` only (no `depmod`), so a power cycle undoes everything. Firmware goes into the driver's own path (`/lib/firmware/apercel/` or `/lib/firmware/powervr/`).
+- **Evidence** goes to `~/farm/gpu-tests/<time>-<test>/`:
+  - PD 5 / PD 6 readbacks before and after the load;
+  - the new `dmesg` lines and the full `dmesg`;
+  - `/dev/dri`, GPU interrupts and devfreq;
+  - PASS/FAIL lines for the firmware version, the DRM name, and the render node bound to that driver (found through sysfs, not just any node).
+
+  It runs `sync` after every step, so a hang still leaves the log on the card.
+- **Rendering checks.** With `/opt/mesa-farm` installed, it runs `vulkaninfo`, `mesa_glver` and `mesa_glsmoke` on the GPU, each under a timeout. They run as root, because the login user may not be in the `render` group.
+- **Checked without a board:** `DRYRUN=1` against a fake `~/farm` (dummy modules, real firmware) exercised all four commands, the guards, and the wrong-firmware refusal. That run found two bugs, both fixed:
+  - `grep -q` under `pipefail` made the PD readback fail at random (SIGPIPE);
+  - the render-node check accepted any GPU's node.
 
 ## 17. Hardware video, Orange Pi's own Android images, and the documents (checked 2026-10-29)
 

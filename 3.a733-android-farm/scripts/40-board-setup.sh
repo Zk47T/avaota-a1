@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RUN ON THE ORANGE PI (Orange Pi Debian bookworm, "current" 6.6 kernel).
+# RUN ON THE ORANGE PI (Orange Pi Debian trixie 1.0.2, 6.6.98 kernel).
 # Copy the outputs to the board first, e.g.
 #   rsync -a out/deploy out/redroid-pvr out/redroid-pvr-c2 orangepi@<ip>:~/farm/
 # Stage 1 (kernel):  ./40-board-setup.sh kernel   -> reboot
@@ -15,7 +15,7 @@ kernel)
   sudo apt-get install -y "$D"/deploy/debs/linux-image-current-sun60iw2-redroid_*.deb \
                           "$D"/deploy/debs/linux-dtb-current-sun60iw2-redroid_*.deb
   echo "Installed. /boot/uImage now holds $REL (it replaces the stock uImage). Reboot, then run: $0 run"
-  echo "Rollback: sudo apt install --reinstall linux-image-current-sun60iw2 && reboot"
+  echo "Rollback: sudo tar -C / -xpf ~/stock-kernel-backup.tar && sudo reboot (BOARD-DAY step 2; apt has no Orange Pi kernel)"
   ;;
 run)
   [ "$(uname -r)" = "$REL" ] || { echo "running $(uname -r), expected $REL (did you reboot?)"; exit 1; }
