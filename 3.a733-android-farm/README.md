@@ -361,6 +361,26 @@ So 2 instances on an A733 get about the same CPU each as 3 on an RK3588. The RK3
 - Expect slow first app starts (dex2oat compiles once), and some stutter when both instances do heavy work at the same time (shared memory bus and spare A55).
 - Not enough for heavy 3D games or high-bitrate 1080p60 video in software. Giving the containers the Cedar video engine (section 8.1) removes the biggest CPU cost.
 
+**Vendor claims of 8–12 instances per RK3588S** (checked 2026-10-29):
+- VMOS Edge "L20" box: RK3588S, 16 GB, "up to 12 Android phones". Its 2U servers claim 128 phones on 16 RK3588S nodes and 1,024 on 128.
+- Firefly CSR1-N10R3588S: 1U, 10 × RK3588S with 16 GB each, "up to 100 cloud phones".
+- One promotional review (Sohu) reports performance holding up at "the 8th to 10th windows" and 72 h of AFK scripts, with no method, resolution or CPU data.
+
+These are **slot counts for game AFK and scripted account farms**, not 12 people actively watching video. The arithmetic: 12 instances share 4 A76 + 4 A55, about **0.5 unit each**, against about 2 for smooth TikTok with software decoding (above), and 16 GB / 12 ≈ 1.2 GB each. It works only with most of these:
+- hardware video decode and screen encode in the containers (Rockchip MPP);
+- low per-instance resolution and frame rate;
+- stripped Android (no GMS, low-RAM settings);
+- memory deduplication (KSM) across identical instances;
+- freezing or pausing instances nobody is looking at.
+
+So the user's own result (3 active instances, crash at 4) is consistent with them. Before buying such a box, ask for a demo of N instances **playing video at the same time**, with an FPS readout (`dumpsys gfxinfo`) and temperature after an hour, and ask whether idle instances are frozen.
+
+Density levers for our A733 boards, in order of gain:
+1. The Cedar video engine in the containers (section 8.1).
+2. Lower `redroid_width/height/fps` (for example 540×960 at 24–30 fps).
+3. `docker pause` (cgroup freezer, already `CONFIG_CGROUP_FREEZER=y`) for instances not in use.
+4. KSM: **currently `# CONFIG_KSM is not set`** in our kernel. Enabling it needs `CONFIG_KSM=y` plus process-wide merging (`prctl(PR_SET_MEMORY_MERGE)`, Linux 6.4+, inherited across fork) on the container's init. Worth it only when RAM, not CPU, is the limit, for example 3 instances on 6 GB.
+
 ### 8.3 Which A733 board for the farm; the Zero 2W expansion board does not fit the Zero 3W
 
 **The Zero 2W expansion board is not compatible with the Zero 3W.** Don't plug it in.
