@@ -1186,7 +1186,7 @@ If instruction trace is what you want at this price, **the FRDM-IMX93 you alread
 
 | | Orange Pi 4A (T527) | Orange Pi Zero 4 (A733) |
 |---|---|---|
-| Linux | board DT, GPU, GbE, Wi-Fi; out-of-tree HDMI/PCIe | pinctrl, PCK600, RTC clock merged. **Main clock driver (CCU) v6 in review.** SoC `.dtsi` posted as v1 (Cubie A7S, June 2026), not merged. **No Orange Pi board DT, no AXP8191 PMIC driver** (3.11). |
+| Linux | board DT, GPU, GbE, Wi-Fi; out-of-tree HDMI/PCIe | PCK600 and RTC clock in v7.3; pinctrl on master for 7.4. **Main clock driver (CCU) v6 in review.** SoC `.dtsi` posted as v1 (Cubie A7S, June 2026), not merged. **No Orange Pi board DT.** The PMIC driver (vendor AXP8191 = mainline AXP318W) is at v8, not merged yet (3.11). |
 | U-Boot | `orangepi_4a_defconfig`, open SPL DRAM init | "initial A733 support" v3 (January 2026), **no DRAM init**, not merged |
 
 **The DDR surprise, which matters for your i.MX95 work.** The A733's `libdram` is a **Synopsys DWC DDR PHY** driver, the same model as NXP:
@@ -1355,14 +1355,14 @@ The cost of an A733 board is running the vendor BSP for a while. Mainline work i
 
 ### 3.11 A733 upstream status, what a Zero 3W owner can contribute, and Yocto
 
-**Sources (all read 2026-10-28):**
+**Sources (all read 2026-10-28; GPU, PMIC and pinctrl re-checked 2026-10-29, and `3.a733-android-farm/scripts/60-mainline-watch.py` repeats the checks):**
 - mainline, linux-next and the sunxi `for-next` tree on kernel.org;
 - kernel.org patchwork, the LKML archive and the U-Boot list;
 - `meta-sunxi`, Allwinner `meta-tina` and SyterKit;
 - the Orange Pi 6.6 kernel DT for the Zero 3W, and Orange Pi's boot0 images (decoded in [4.a733-ddr](4.a733-ddr/README.md)).
 
 **Mainline today:**
-- Mainline (7.3-dev), linux-next and sunxi `for-next` have **no `sun60i` DTS**. Only the five `sun55i` files (A523/T527) exist.
+- Mainline (v7.3 released; master is in the 7.4 merge window), linux-next and sunxi `for-next` have **no `sun60i` DTS**. Only the five `sun55i` files (A523/T527) exist.
 - **U-Boot has no A733 support** (it has the open T527 DRAM driver `dram_sun55i_a523.c`).
 - **TF-A master has no `sun55i` or `sun60i` port.**
 
@@ -1370,17 +1370,17 @@ The cost of an A733 board is running the vendor BSP for a while. Mainline work i
 
 | Area | Who | State |
 |---|---|---|
-| Pinctrl driver + binding | Andre Przywara | merged; fixes in review (Andre, Vinicius Pedrosa) |
+| Pinctrl driver + binding | Andre Przywara | on master for **7.4** (not in v7.3); I/O-voltage and withstand fixes in review (2026-10-12/13) |
 | PCK600 power domains, RTC clock, MMC binding | Yuanshen Cao, Jerome Brunet | merged |
 | DMA | Yuanshen Cao | accepted (2026-08) |
 | **Main clock driver (CCU)** | Junhui Liu | **v6 in review** (2026-10-09). Everything else waits on it. |
 | UART (8250_dw) | Vinicius Pedrosa | v2 (2026-10-19) |
 | Message box | Tim Michals | v2 (2026-09) |
 | **SoC `.dtsi` + Radxa Cubie A7S board** | Enzo Adriano | **v1** (2026-06-13): CPUs, GIC, CCU/R-CCU, pinctrl, UART0, SD. See the review notes below. |
-| **PMIC AXP8191** (main PMIC on A733 boards) | **nobody** | not in mainline `axp20x`, no patches on patchwork |
+| **PMIC AXP318W** (= vendor "AXP8191", main PMIC on A733 boards) | Andre Przywara | **v8** (2026-09-10): MFD, regulators, binding. Patchwork marks the MFD/regulator patches "handled-elsewhere" (picked up by the maintainer, most likely). Not in mainline or linux-next on 2026-10-29. The U-Boot series also supports it, and notes it is called "AXP819" in vendor PMU code. Earlier versions of this README said "nobody": that was wrong, because the search used only the vendor name. |
 | U-Boot "initial A733 support" | Yixun Lan | v3 (2026-01), **no DRAM init**, not merged |
 | SyterKit (open bootloader) | YuzukiHD / SamulKyull | Cubie A7A and A7Z ports (2026-09): DRAM via the vendor blob, then an app; no Linux boot yet |
-| GPU (BXM-4-64) | apercel (community) | out of tree, Orange Pi 4 Pro |
+| GPU (BXM-4-64, BVNC 36.56.104.183) | apercel (community); the **SpacemiT K3** work (same BVNC) | apercel: out of tree, Orange Pi 4 Pro. K3: binding `spacemit,k3-gpu` on master for 7.4 (`16f30811a935`, 2026-10-15); the BVNC is not in `drm/imagination`'s support list yet (load with `exp_hw_support=1`); Imagination's open firmware fw 1.1 exists but is not in linux-firmware main; Mesa docs list the BVNC "in active development"; BayLibre builds a fully open Android 17 on it. Details: [farm README 16.8](3.a733-android-farm/README.md). |
 | **Orange Pi Zero 3W** | — | **nothing anywhere** |
 
 Review notes on the Cubie A7S `.dtsi` v1:
@@ -1397,7 +1397,7 @@ Review notes on the Cubie A7S `.dtsi` v1:
 
 | Item | Value |
 |---|---|
-| PMICs | **AXP8191** (main) + **AXP515** (both missing in mainline) |
+| PMICs | **AXP8191** in the vendor DT = **AXP318W** on the schematic (main; mainline driver at v8, not merged) + **AXP515** (missing in mainline) |
 | USB-C | power port = USB 2.0 OTG (UDC, also FEL); second port = USB 3.1 OTG (DWC3) + DP alt mode, behind a **HUSB311** driven as `fcs,fusb302` (mainline driver exists) |
 | DRAM | LPDDR5, `dram_clk` 2400 MHz (an 1800 MHz boot0 also exists), `tpr10 = 0x325F0000` |
 | Crystal | 24 or 26 MHz `[?]`. The vendor DT defines 19.2/24/26 MHz options. Read it on the vendor image (`grep dcxo /sys/kernel/debug/clk/clk_summary`) or from the schematic. |
@@ -1409,10 +1409,10 @@ Review notes on the Cubie A7S `.dtsi` v1:
 
 1. **Board facts first:** the crystal, a `/proc/device-tree` dump and boot logs from the vendor image.
 2. **SyterKit `boards/orangepi-zero3w`.** Copy the Cubie A7Z port and use the decoded LPDDR5 `dram_para`. It's fast and mergeable now, and the first LPDDR5 A733 board in SyterKit.
-3. **AXP8191 in mainline `axp20x`** (MFD + regulators + power key).
-   - It's unclaimed, and it blocks every A733 board beyond UART + SD: eMMC/UFS, USB, PCIe and CPU DVFS all need it.
-   - References: the vendor GPL `bsp/drivers/power/regulator/axp2101-regulator.c` (AXP8191 ranges) and SyterKit's `drivers/pmu/axp8191.c` with its register header.
-   - Follow the AXP717/AXP323 patterns.
+3. **`Tested-by` on Andre Przywara's AXP318W series** (v8) from the Zero 3W. Don't write a new AXP8191 driver: it is the same part.
+   - It blocks every A733 board beyond UART + SD: eMMC/UFS, USB, PCIe and CPU DVFS all need it.
+   - First read the chip-ID register over I2C on the vendor image and compare it with the ID in Andre's driver.
+   - Cross-check its regulator ranges against the vendor GPL `bsp/drivers/power/regulator/axp2101-regulator.c` (AXP8191 ranges) and SyterKit's `drivers/pmu/axp8191.c`.
 4. **`Tested-by`** on the CCU v6 series, and later on the `.dtsi` v2, using the Zero 3W.
 5. **`sun60i-a733-orangepi-zero3w.dts`** once the `.dtsi` lands (bindings first, `make dtbs_check`, `b4`, boot logs).
 6. **Longer term: A733 DRAM init in U-Boot SPL.** It's the real blocker for a mainline boot.
@@ -1427,7 +1427,7 @@ Review notes on the Cubie A7S `.dtsi` v1:
 | Base | new layer (e.g. `meta-orangepi-a733`), **scarthgap**, same release as Allwinner `meta-tina` | `meta-sunxi` master (`LAYERSERIES_COMPAT = wrynose`) |
 | Kernel | Orange Pi `orange-pi-6.6-sun60iw2` + their config + the farm fragment. Yocto builds with `O=`, which breaks the vendor `cedar-ve` Makefile: set `B = "${S}"` or patch it. | `linux-mainline` once the `.dtsi` and board DTS land |
 | Boot | prebuilt boot0 + `boot_package` (packed by Allwinner's x86 tool); wic: boot0 at 8 KiB, `boot_package` at 16,400 KiB. Later SyterKit. | U-Boot SPL with open DRAM init + TF-A |
-| GPU | `pvrsrvkm` recipe + Linux blobs (libgpu) or the redroid image | `drm/imagination` + Mesa, once the A733 BVNC and firmware are upstream |
+| GPU | `pvrsrvkm` recipe + Linux blobs (libgpu) or the redroid image | `drm/imagination` + Mesa, once the BVNC and firmware are upstream; the SpacemiT K3 (same BVNC) is pushing both |
 | Machine | a few lines, plus recipes | a 3-line `orange-pi-zero3w.conf` like `orange-pi-4a.conf` (added by a contributor on 2026-07-30) plus `sun60i.inc` |
 | Value | reproducible farm images; a Yocto BSP for a new SoC is good portfolio material | the natural follow-up if you also write the board DTS |
 
@@ -1466,7 +1466,9 @@ Upstream:
     - [Enzo Adriano A733/Cubie A7S series](https://lkml.iu.edu/2606.1/12608.html), [Jerome Brunet review](https://lkml.iu.edu/2606.2/11619.html), [Enzo's status repo](https://github.com/crescenzo77/radxa_cubie_a7s_allwinner_a733)
     - [kernel.org patchwork, A733 patches](https://patchwork.kernel.org/api/1.3/patches/?q=a733) (CCU v6 Junhui Liu, UART, pinctrl, msgbox)
     - Linux and U-Boot `MAINTAINERS` (sunxi sections)
-  - U-Boot: [Yixun Lan A733 initial support v3](https://lists.denx.de/pipermail/u-boot/2026-January/607466.html)
+  - U-Boot: [Yixun Lan A733 initial support v3](https://lists.denx.de/pipermail/u-boot/2026-January/607466.html), [AXP318W ("AXP819" in vendor code)](https://lists.denx.de/pipermail/u-boot/2026-January/606579.html)
+  - PMIC: [AXP318W patches on patchwork](https://patchwork.kernel.org/api/1.3/patches/?q=axp318) (v8, 2026-09-10)
+  - GPU (same BVNC on the SpacemiT K3): [K3 binding on patchwork](https://patchwork.kernel.org/api/1.3/patches/?q=k3-gpu), [Mesa PowerVR docs](https://docs.mesa3d.org/drivers/powervr.html), [BayLibre K3 AOSP](https://github.com/BayLibre/android_device_spacemit_k3); everything else in [farm README 15 and 16.8](3.a733-android-farm/README.md)
   - Yocto: [meta-sunxi](https://github.com/linux-sunxi/meta-sunxi) (`orange-pi-4a.conf`, `sun55i.inc`), Allwinner [meta-tina](https://gitlab.com/tina5.0_aiot/product/tina/yocto/meta-tina) (`t736-demo`)
   - SyterKit [boards/radxa-cubie-a7z](https://github.com/YuzukiHD/SyterKit/tree/main/boards/radxa-cubie-a7z), `drivers/pmu/axp8191.c`
   - Orange Pi: kernel `orange-pi-6.6-sun60iw2` (Zero 3W DT: AXP8191 + AXP515, HUSB311), orangepi-build `sun60iw2.conf` (SD/UFS boot layout)

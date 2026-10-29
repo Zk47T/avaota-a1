@@ -2,7 +2,7 @@
 # Recreate src/ at the exact commits this project was built and checked with.
 # Shallow + sparse: ~2.5 GB download (most of it is the kernel).
 #   ./scripts/00-fetch-sources.sh            all repos
-#   ./scripts/00-fetch-sources.sh kernel gpu only those groups
+#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw)
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$FARM/src"
@@ -52,5 +52,23 @@ if want ref || [ -z "$SEL" ]; then
         '/external/config/kernel/*sun60iw2*' '/external/config/sources/families/sun60iw2.conf' \
         '/external/config/bootscripts/boot-sun60iw2.cmd' '/external/packages/bsp/sun60iw2/' \
         '/external/packages/pack-uboot/sun60iw2/'
+fi
+if want fw || [ -z "$SEL" ]; then
+  # Open GPU stack references for BVNC 36.56.104.183 (same GPU as the SpacemiT K3), README 16.8:
+  #  - Imagination's open-source firmware fw 1.1 build 6976702, as vendored in BayLibre's K3 AOSP tree
+  #    (not in linux-firmware main yet). libgpu's copy (group "ref") is the older 1.0 build 6852738.
+  #  - BayLibre's K3 / SpacemiT common device trees: the Android Mesa stack to mirror for Route M.
+  FW=$FARM/src/firmware/imagination-fw-1.1
+  mkdir -p "$FW"
+  if ! echo "1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2  $FW/rogue_36.56.104.183_v1.fw" | sha256sum -c --status 2>/dev/null; then
+    echo "fetch firmware rogue_36.56.104.183_v1.fw (1.1 build 6976702)"
+    curl -fsSL -o "$FW/rogue_36.56.104.183_v1.fw" \
+      "https://raw.githubusercontent.com/BayLibre/android_device_spacemit_k3/a09d86fe4703a46240cd8ae5c8a76894a761ecf0/firmware/powervr/rogue_36.56.104.183_v1.fw"
+    echo "1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2  $FW/rogue_36.56.104.183_v1.fw" | sha256sum -c
+  else
+    echo "ok    firmware/imagination-fw-1.1"
+  fi
+  fetch baylibre-k3     $GH/BayLibre/android_device_spacemit_k3.git     06c4578ef02e5d19fc62ef824f2cc616a724c710
+  fetch baylibre-common $GH/BayLibre/android_device_spacemit_common.git 755c243bb9f2b1dbdbe4fb7a67ba15051b50d90b
 fi
 du -sh "$FARM/src"

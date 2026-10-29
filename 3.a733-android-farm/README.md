@@ -6,6 +6,14 @@ Pilot board: **Orange Pi Zero 3W, 6 GB**, with a USB-C GbE dongle (section 8). T
 
 Status on 2026-10-28. Everything that can be built or checked without an A733 board has been done.
 
+**Update 2026-10-29: the A733 GPU has an open stack coming** (section 16.8).
+- The SpacemiT K3 has the **same GPU revision** (BXM-4-64, BVNC 36.56.104.183).
+- Imagination's open-source firmware for it (fw 1.1 build 6976702) is public: fetch group `fw`, sha256-pinned.
+- Mesa lists 36.56.104.183 as "in active development".
+- BayLibre's Android 17 for the K3 runs fully open (upstream `drm/imagination` + Mesa + minigbm). That is **Route M**.
+- **On board day:** test order stays Route L → Route A, plus an optional firmware-1.1 test in Route L (BOARD-DAY step 4c).
+- **To keep following mainline:** `python3 -I scripts/60-mainline-watch.py` (section 16.9).
+
 - **On this PC:** the kernel and GPU driver were built, and the checks were static: reading binaries and image files.
 - **Not built or run on this PC:** redroid (there's no Docker here).
 - **Still to do:**
@@ -27,7 +35,7 @@ Status on 2026-10-28. Everything that can be built or checked without an A733 bo
 
 ---
 
-## 1. Is there a working PowerVR stack for A733 to build on? Yes, four
+## 1. Is there a working PowerVR stack for A733 to build on? Yes, five
 
 | Stack | What it is | Where | Role here |
 |---|---|---|---|
@@ -36,6 +44,7 @@ Status on 2026-10-28. Everything that can be built or checked without an A733 bo
 | AIoT rogue_km (tina5 BSP) | DDK-style Linux driver for BVNC 36.56.104.183 (`RGX_BVNC := 36.56.104.183`), DDK 24.2@6603887, with `sunxi_secure_config()` | `gitlab.com/tina5.0_aiot/lichee/bsp` → `modules/gpu/img-bxm/linux/rogue_km` (`a5fe1970`) | Origin of the secure-reset step (section 4). Not what the Orange Pi 6.6 tree builds. |
 | Radxa A733 Bullseye image (reference) | Radxa's prebuilt Linux GPU stack for A733: DKMS `img-bxm-dkms` 0.1.0-2, `pvrsrvkm.ko` for kernel 5.15.147-14-a733 (DDK 24.2@6603887, Linux WS build), IMG user-space 24.2.6603887, firmware `rgx.fw` / `rgx.sh` 36.56.104.183 | Public apt repo `radxa-repo.github.io/a733-bullseye`; image `radxa-a733_bullseye_kde_r2.output_512.img.xz` (sha256 `1b5604fe…`) | Reference only. Compare the Linux driver and its start sequence. Not a base: 5.15 kernel. Mirror the repo before it disappears. |
 | Open source | `apercel` (Oct 2026): the upstream `drm/imagination` driver built out of tree, plus a patch to Mesa 26.1.8 for BVNC 36.56.104.183. Vulkan + Zink, tested on an Orange Pi 4 Pro (A733). Linux 7.3 lists BXM-4-64 MC1 (TH1520) as supported; Mesa BXM-4-64 isn't conformant yet. | github.com/TumRedSun/apercel | Plan B (section 13), and an upstream opportunity. |
+| **Open stack, same GPU (SpacemiT K3)** | The K3 has BXM-4-64 at **BVNC 36.56.104.183**, the same as the A733. Imagination's open-source firmware `rogue_36.56.104.183_v1.fw` is **fw 1.1 build 6976702**, newer than libgpu's 1.0 build 6852738. Mesa's docs list 36.56.104.183 as "in active development". BayLibre's **Android 17** for the K3: upstream `drm/imagination` + Mesa ≥ 26.1 (PowerVR Vulkan + Zink GLES) + minigbm `gbm_mesa` + hwc3 drm. | `BayLibre/android_device_spacemit_k3` (`06c4578e`), `BayLibre/android_device_spacemit_common` (`755c243b`), `BayLibre/mesa`; fetch group `fw` | **Route M** (section 16.8): the long-term open path for redroid. No DDK matching and no blobs. |
 
 Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC++): one host driver serves an Android userspace in a container (`SUPPORT_ARC_PLATFORM`). redroid does the same thing.
 
@@ -64,7 +73,9 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 ## 3. Folder layout
 
 ```
-3.a733-android-farm/                     (tracked in git: README, config/, scripts/)
+3.a733-android-farm/                     (tracked in git: README, BOARD-DAY.md, KIT-SHA256.txt, config/, scripts/)
+├── BOARD-DAY.md                         first-session runbook for the Zero 3W (serial, rollback, Route L/A, fw 1.1 test)
+├── KIT-SHA256.txt                       hashes of the kit built on the build PC
 ├── config/
 │   ├── linux-sun60iw2-current-a733.config         Orange Pi's kernel config (orangepi-build a95129bf3)
 │   ├── redroid-host.fragment                      options added on top of it
@@ -74,7 +85,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   └── headers-debian-byteshift.patch             needed by Orange Pi's builddeb
 ├── scripts/
 │   ├── env.sh                           toolchain + paths
-│   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref)
+│   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw)
 │   ├── 10-build-host-kernel.sh          kernel + fragment
 │   ├── 15-package-kernel-deb.sh         -> linux-image/dtb/headers .deb
 │   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch)
@@ -85,9 +96,13 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 31-make-aosp-vendor-tree.sh      vendor/powervr-a733 for SOURCE-built redroid
 │   ├── 35-test-on-redroid-host.sh       RUN ON YOUR OTHER REDROID PC
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
-│   └── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
+│   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
+│   ├── 50-board-report.sh               board: PASS / WARN / FAIL report + evidence folder
+│   └── 60-mainline-watch.py             any PC: re-check mainline/next/firmware/Mesa/patchwork, diff vs last run
 ├── src/   (git-ignored; 00-fetch-sources.sh)
 └── out/   (git-ignored; contains vendor blobs, do not publish)
+    ├── fw/1.0, fw/1.1                   the two GPU firmware files, staged for the board (BOARD-DAY step 3)
+    └── mainline-watch/<date>.json       60-mainline-watch.py snapshots (per PC; baseline values in 16.9)
 ```
 
 ## 4. Bring-up risk found and fixed: platform glue differences
@@ -365,7 +380,11 @@ Practical limit: SD-sniffer JTAG uses the **microSD pins**, so it only works whi
 
 ## 13. Fallbacks
 
-- **Plan B, open stack.** `apercel` / upstream `drm/imagination` on the host; Mesa `imagination` Vulkan plus ANGLE (already in redroid 13) in the container. No DDK matching, upstreamable. Risks: non-conformant Vulkan 1.2, and gralloc needs minigbm/gbm support for `powervr`.
+- **Plan B, open stack = Route M (section 16.8).**
+  - Host: `apercel` / upstream-style `drm/imagination` with Imagination's fw 1.1.
+  - Container: Mesa's PowerVR Vulkan + Zink for GLES, minigbm `gbm_mesa` gralloc, and the hwc3 drm composer. BayLibre ships exactly this for the same GPU on the K3 (Android 17).
+  - No DDK matching, upstreamable.
+  - Risks: non-conformant Vulkan 1.2 (needs `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`), and redroid's Mesa must be rebuilt with `imagination` + `zink`.
 - **Plan C, software.** redroid `guest` mode (ANGLE on SwiftShader). Only for light apps.
 
 ## 14. Source revisions
@@ -383,6 +402,9 @@ Practical limit: SD-sniffer JTAG uses the **microSD pins**, so it only works whi
 | remote-android/device_redroid | redroid-13.0.0 | 736f66d85 |
 | remote-android/vendor_redroid | master | 1686c1825 (2025-06-24), base of the gpu_config patch |
 | redroid image | `redroid/redroid:13.0.0_64only-240527` (= `-latest`) | arm64 layer sha256:7ae0e911… |
+| BayLibre/android_device_spacemit_k3 | android-17 | 06c4578ef (2026-09-18); firmware file from a09d86fe4 |
+| BayLibre/android_device_spacemit_common | android-16 | 755c243bb (2026-06-15) |
+| Imagination fw for 36.56.104.183 (via BayLibre) | — | fw 1.1 build 6976702, 131,072 B, sha256 `1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2` |
 
 Licences:
 - The GPU kernel driver is dual MIT/GPL.
@@ -402,8 +424,14 @@ Licences:
 - Mainline DRM driver: https://github.com/torvalds/linux/tree/master/drivers/gpu/drm/imagination
 - Mesa PowerVR source (freedesktop, main): https://gitlab.freedesktop.org/mesa/mesa/-/tree/main/src/imagination
 - linux-riscv mailing-list archive (lists.infradead.org; the A733 CCU v5 thread in section 16.3) and linux-firmware (GitLab, `powervr/`), both checked 2026-10-28
+- SpacemiT K3 GPU (section 16.8):
+  - BayLibre K3 AOSP: https://github.com/BayLibre/android_device_spacemit_k3, https://github.com/BayLibre/android_device_spacemit_common, https://github.com/BayLibre/mesa
+  - K3 binding v3 and review: https://lkml.iu.edu/2607.3/06724.html, https://lkml.iu.edu/2607.3/10035.html; probe without power-domains: https://lkml.iu.edu/2607.3/06720.html
+  - openRuyi K3 firmware issue: https://github.com/openRuyi-Project/kernel-team-tools/issues/29
+  - Phoronix BXM-4-64 firmware: https://www.phoronix.com/news/IMG-PowerVR-BXM-4-64-FW
+- AXP318W (= vendor AXP8191 / AXP819, section 16.5): https://patchew.org/linux/20260710-axp318-regulator-v2-0-ee5f1c56b49f@baylibre.com/, U-Boot https://lists.denx.de/pipermail/u-boot/2026-January/606579.html
 
-## 16. Mainline status and upstream commits (checked 2026-10-28)
+## 16. Mainline status and upstream commits (checked 2026-10-28; GPU, PMIC and firmware re-checked 2026-10-29)
 
 Checked against `torvalds/linux` (latest tag v7.3; master carries the 7.4 work), the linux-riscv archive (lists.infradead.org), linux-firmware (gitlab raw) and the apercel project. "In v7.3" means GitHub's compare against `v7.3` returned `behind`, so the commit is an ancestor of the tag. lore.kernel.org showed a bot check to this environment and linux-sunxi.org returned 403, so those two were read only through search snippets. Nothing here has run on hardware.
 
@@ -445,11 +473,11 @@ The first adds `pinctrl-sun60i-a733.c`. The I2C commit is binding-only.
 |---|---|---|
 | A733 CCU and PRCM clock driver | `drivers/clk/sunxi-ng/` has no sun60i file | In review: "[PATCH v5 0/8] clk: sunxi-ng: Add support for Allwinner A733 CCU and PRCM" (linux-riscv archive, message 100638; patch 3/8 "clk: sunxi-ng: a733: Add PRCM CCU"). Reviewer Chen-Yu Tsai (3 Oct 2026) raised secure-by-default PLLs and bus dividers, and a secure-only TWD clock. |
 | A733 device tree and Zero 3W board DTS | no sun60i or orangepi-zero3w file in `arch/arm64/boot/dts/allwinner` | No patch found in our searches |
-| BVNC 36.56.104.183 (our GPU) | `pvr_gpu_support_level()` in `pvr_device.c` marks 33.15.11.3 (the AXE-1-16M the docs list), 36.52.104.182 (BXM-4-64, TH1520) and 36.53.104.796 (the BXS-4-64 MC1 the docs list) as supported. 36.56.104.183 is absent. | Missing. Mainline refuses unknown BVNCs unless `exp_hw_support` is set. The Orange Pi 6.6 driver has no BVNC table. Mesa's canonical tree (freedesktop GitLab, main) lists 36.52.104.182 and 36.53.104.796 only. |
-| GPU binding for A733 | `img,powervr-rogue.yaml`: no Allwinner entry | Missing. The mainline BXM-4-64 pattern is `"thead,th1520-gpu", "img,img-bxm-4-64", "img,img-rogue"`. The vendor tree and the kit's driver use `img,gpu`. |
-| GPU firmware `rogue_36.56.104.183_v1.fw` | linux-firmware `powervr/`: the TH1520's `rogue_36.52.104.182_v1.fw` returns 200, ours returns 404 | Missing upstream. Allwinner's libgpu has the file (section 16.7). |
+| BVNC 36.56.104.183 (our GPU) | `pvr_gpu_support_level()` in `pvr_device.c` marks 33.15.11.3 (the AXE-1-16M the docs list), 36.52.104.182 (BXM-4-64, TH1520) and 36.53.104.796 (the BXS-4-64 MC1 the docs list) as supported. 36.56.104.183 is absent (re-checked in mainline and linux-next 2026-10-29). | Missing in the driver. Mainline refuses unknown BVNCs unless `exp_hw_support=1` is set; with it, it warns "Running on unknown hardware; expect issues" and continues. The Orange Pi 6.6 driver has no BVNC table. **Mesa:** the docs (docs.mesa3d.org, 2026-10-29) list 36.56.104.183 in the "in active development" table (Vulkan 1.2, not conformant). The code check on 2026-10-28 found only 36.52.104.182 and 36.53.104.796 in the `pvr_physical_device.c` BVNC switch. Re-check the code on the build PC (freedesktop GitLab blocks scripts here). |
+| GPU binding for A733 | `img,powervr-rogue.yaml`: no Allwinner entry | Missing. The mainline BXM-4-64 entry is now `enum: [spacemit,k3-gpu, thead,th1520-gpu]` + `img,img-bxm-4-64` + `img,img-rogue`. `spacemit,k1-gpu` and `spacemit,k3-gpu` were merged in `16f30811a935` (2026-10-15, Baihui Liang). An A733 entry would join that enum. The vendor tree and the kit's driver use `img,gpu`. |
+| GPU firmware `rogue_36.56.104.183_v1.fw` | linux-firmware `powervr/` main has only 33.15.11.3, 36.52.104.182 and 36.53.104.796 (re-checked 2026-10-29) | Not in linux-firmware main. **Imagination's open-source build exists:** fw 1.1 build 6976702, vendored in BayLibre's K3 tree (fetch group `fw`, section 16.8). Allwinner's libgpu has the older 1.0 build 6852738 (section 16.7). |
 | A733 sunxi MMC driver | `drivers/mmc/host/sunxi-mmc.c`: no A733 match | Binding only (`8dc697aa…`) |
-| AXP318W regulators | `drivers/regulator/axp20x-regulator.c` and `drivers/mfd/axp20x.c`: no axp318w | "[PATCH v3 4/4] regulator: axp20x: add support for the AXP318W", July 2026 (lkml.iu.edu/2607.2/02884.html). The message gives no DT compatible and no test board. |
+| AXP318W regulators | `drivers/regulator/axp20x-regulator.c` and `drivers/mfd/axp20x.c`: no axp318w (mainline and linux-next, re-checked 2026-10-29) | Andre Przywara's series (RFC 2025-08) is at **v8** (2026-09-10): "mfd: axp20x: Add support for AXP318W PMIC", "regulator: axp20x: add support for the AXP318W", and the binding in `x-powers,axp152`. Patchwork marks the MFD/regulator patches "handled-elsewhere", most likely picked up by the subsystem maintainer. Expect it in 7.4 or 7.5. |
 
 ### 16.4 Out of tree
 
@@ -461,14 +489,16 @@ The first adds `pinctrl-sun60i-a733.c`. The I2C commit is binding-only.
 1. **The power domains are mainline-shaped.** The A733 PCK-600 driver puts each domain's PPU block at `base + 0x1000 × index`. Domain 5 (GPU_TOP) is at `0x07065000`, and domain 6 (GPU_CORE) is at `0x07066000`, the address the kit writes `0x8` to (`PPU_PWPR`, `POWER_MODE_ON`). The Zero 3W tree requests domain 5 only. The Orange Pi 6.6 SoC DT keeps its GPU_CORE node commented out, and Route L doesn't need GPU_CORE. The Android path does the manual write, as the vendor Android does. Board check: read `PPU_PWSR` (+0x8, bits 3:0) at `0x07065008` and `0x07066008`; `0x8` means on. Read both before loading the driver and after the write.
 2. **The minimal sequence is the vendor's Linux one.** The Orange Pi 6.6 driver powers the GPU with `clk_parent`, `clk` and `clk_bus`, a 1 µs delay, then one reset deassert: the same code apercel uses. No PPU, secure or bit-27 write. Route L tests that path on our board. The Android path keeps the writes the vendor Android and AIoT code make.
 3. **Secure-by-default clocks.** The CCU review says the A733's PLLs and bus dividers are secure by default, and asks whether things work only because secure boot is not enforced. One tester reports the registers work on a Radxa Cubie A7S without secure boot. Those measurements are AI-assisted, and the author asks that they not count as Tested-by.
-4. **PMIC naming is unresolved.** Every vendor device tree we checked defines `x-powers,axp8191`: both Orange Pi trees, and Radxa's Cubie A7A, A7S and A7Z. The schematic and the July 2026 patch say AXP318W. Nothing we found proves they are the same die.
+4. **PMIC naming: almost certainly one part.** Every vendor device tree we checked defines `x-powers,axp8191`: both Orange Pi trees, and Radxa's Cubie A7A, A7S and A7Z. The Zero 3W schematic and mainline say AXP318W, and the U-Boot AXP318W series says the part is called "AXP819" in vendor PMU code.
+   - **So don't write a new AXP8191 driver.** Give `Tested-by` on Andre's AXP318W series (v8) from the Zero 3W instead.
+   - Board check: read the PMIC's chip-ID register over I2C and compare it with the ID in the AXP318W driver.
 5. **Names differ from mainline.** The PCK-600 compatible is `allwinner,sun60i-a733-pck-600` upstream and `allwinner,sun60iw2-pck-600` in the Zero 3W tree. Firmware is named `rogue_<BVNC>_v1.fw` upstream and `rgx.fw.<BVNC>` in the vendor tree.
 
 Upstream does not run the Zero 3W. Its mainline gaps are the CCU, the device tree, the BVNC and the firmware. Those are the commits to watch, or to write, if we want a mainline path.
 
 ### 16.6 GPU routes and test order
 
-Four ways to drive this GPU on our board, ordered by evidence and by how much each test tells us.
+Five ways to drive this GPU on our board, ordered by evidence and by how much each test tells us.
 
 | Route | Driver | Firmware | Userspace | Status |
 |---|---|---|---|---|
@@ -476,6 +506,7 @@ Four ways to drive this GPU on our board, ordered by evidence and by how much ea
 | **A** redroid | kit's `pvrsrvkm-android.ko` (Android DDK 6643903) | `/lib/firmware/rgx.fw.36.56.104.183` (Android copy) | Android blobs in the container | Built, never run. Keeps the PPU, secure and bit-27 writes. |
 | apercel (fallback) | out-of-tree kbuild module `apercel` (`driver/`, upstream drm/imagination files kept) | `/lib/firmware/apercel/rogue_36.56.104.183_v1.fw` (the Allwinner file, copied by hand; apercel does not ship it) | Mesa with `mesa/apercel-mesa.patch` | Tested by its author on an Orange Pi 4 Pro only. Not proven on the Zero 3W. Use it if Route L fails at the driver level. |
 | Radxa DKMS (reference) | DDK 6603887, Rogue style, for 5.15 | Radxa `rgx.fw` (v2, not open-source) | Radxa libraries | Not for our 6.6 kernel. |
+| **M** open stack (planned) | Route L's driver, or `apercel` / mainline `drm/imagination` (`exp_hw_support=1` until the BVNC is listed) | Imagination **fw 1.1 build 6976702** (`src/firmware/imagination-fw-1.1/`, sha256 `1db1c399…`) | redroid rebuilt with Mesa PowerVR Vulkan + Zink, minigbm `gbm_mesa`, hwc3 drm (BayLibre's K3 stack) | Plan only (section 16.8). Start after Route L shows the GPU probes and its firmware boots. |
 
 **Route L, step by step.** Step 1 runs on the build PC.
 1. Build PC, done 2026-10-28 in a copy of the kit tree (`/mnt/project/route-l-build/linux-orangepi-6.6`; the kit tree itself was not changed). `CONFIG_AW_DRM_POWERVR=m` and `make olddefconfig` add three helper modules that the kit's `.config` did not have: `CONFIG_DRM_EXEC=m`, `CONFIG_DRM_GEM_SHMEM_HELPER=m` and `CONFIG_DRM_SCHED=m`. Five config lines change in all (`out/route-l/config-delta.txt`). Then `make modules_prepare`, `make modules` and `make M=bsp/drivers/gpu/imagination modules` all exit 0. The one warning is an unused variable in the BSP's `drm_gpuvm.c`. `powervr.ko` has vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`, needs `gpu-sched`, `drm_shmem_helper` and `drm_exec`, and matches `img,gpu` (`of:N*T*Cimg,gpuC*`). MODVERSIONS is off in the kit config, so a load checks vermagic only. The four modules and their hashes are in `out/route-l/` on the build PC (`SHA256SUMS`). Not run on hardware yet.
@@ -501,13 +532,94 @@ Order: Route L first. It uses the vendor's own minimal sequence, so a Route L fa
 | AIoT rogue_km | `gitlab.com/tina5.0_aiot/lichee/bsp` @ `a5fe197076f2fed46223ac911588b4e6e6bffd3c`, `modules/gpu/img-bxm/linux/rogue_km/` | `sunxi_secure_config` in `services/system/rogue/rgx_sunxi/sunxi_platform.c:964`, which writes `0x2` to `0x0a0000b0` and `0x0` to `0x01880014`. `pfnTDSystemSecureConfig` is set in `services/system/rogue/rgx_sunxi/sysconfig.c:371` and called from `services/server/devices/rgxpower.c:886`. `RGX_BVNC := 36.56.104.183` (`build/linux/sunxi_linux/Makefile:69`), and `hwdefs/rogue/km/cores/rgxcore_km_36.56.104.183.h`. |
 | Vendor CCU | same Orange Pi tree: `bsp/drivers/clk/sunxi-ng/ccu-sun60iw2.c` | `gpu0_clk` at `0x0B20`: gate bit 31, mux bits 24–26, divider bits 0–3. `gpu0_bus_clk` gate at `0x0B24` bit 0. Reset `RST_BUS_GPU0` = 32 (`bsp/include/dt-bindings/reset/sun60iw2-ccu.h:42`), at `0x0B24` bit 16, which matches our DT. Bit 27 of `0x0B20` is not in the vendor field list. |
 | Mainline | `torvalds/linux` master, `drivers/gpu/drm/imagination/pvr_device.c` | `pvr_gpu_support_level`: supported are 33.15.11.3, 36.52.104.182 and 36.53.104.796. Unknown BVNCs are refused unless `exp_hw_support` is set. |
-| Mesa (upstream) | `gitlab.freedesktop.org/mesa/mesa` main, `src/imagination/vulkan/pvr_physical_device.c` | The BVNC switch lists 36.52.104.182 and 36.53.104.796 only. |
+| Mesa (upstream) | `gitlab.freedesktop.org/mesa/mesa` main, `src/imagination/vulkan/pvr_physical_device.c` | The BVNC switch lists 36.52.104.182 and 36.53.104.796 only (code read 2026-10-28). The docs at docs.mesa3d.org list 36.56.104.183 under "in active development" (2026-10-29). The docs may be ahead of the switch, or the entry may sit elsewhere; re-read the code before patching. |
 | apercel | `TumRedSun/apercel`, `mesa/apercel-mesa.patch` | Adds `case PVR_BVNC_PACK(36, 56, 104, 183): return true;` to the device check in `src/imagination/vulkan/pvr_physical_device.c`. |
 
-**Potential upstream commits, from this evidence**
-- Kernel: one line in `pvr_gpu_support_level()` for 36.56.104.183, as SUPPORTED or EXPERIMENTAL. The firmware carries the device info, so the driver should need no feature table for it. Validate on hardware first.
-- Mesa: `PVR_BVNC_PACK(36, 56, 104, 183)` in `src/imagination/vulkan/pvr_physical_device.c`. apercel adds it along with limit changes.
-- Device tree: an Allwinner SoC compatible, then `img,img-bxm-4-64` and `img,img-rogue`, as the TH1520 entry does in the binding (section 16.3). Upstream has neither an Allwinner GPU compatible nor an A733 SoC DTS.
+**Potential upstream commits, from this evidence** (updated 2026-10-29: the K3 people need the same BVNC lines, see 16.8)
+- Kernel: one line in `pvr_gpu_support_level()` for 36.56.104.183, as SUPPORTED or EXPERIMENTAL. The firmware carries the device info, so the driver should need no feature table for it. Validate on hardware first. The K3 work will likely send this line first; then our part is a `Tested-by` from the A733.
+- Mesa: `PVR_BVNC_PACK(36, 56, 104, 183)` in `src/imagination/vulkan/pvr_physical_device.c`. apercel adds it along with limit changes. The Mesa docs already list this BVNC as "in active development", so check Mesa main before writing it.
+- Device tree: add `allwinner,sun60i-a733-gpu` to the existing `enum: [spacemit,k3-gpu, thead,th1520-gpu]` entry, followed by `img,img-bxm-4-64` and `img,img-rogue` (section 16.3). Upstream has no A733 SoC DTS yet, so the binding patch should go with the GPU node in the A733 dtsi.
 - Clocks: the A733 CCU series in review (section 16.3).
-- Firmware: the libgpu file is marked open-source. Check its licence before any redistribution.
+- Firmware: Imagination's fw 1.1 for 36.56.104.183 exists in its own linux-firmware fork (section 16.8). Imagination sends it to linux-firmware main, not us. libgpu's 1.0 file is also marked open-source; check its licence before redistributing it.
+
+### 16.8 SpacemiT K3: same GPU, open stack (checked 2026-10-29)
+
+The SpacemiT K3 (RISC-V, `spacemit,x100`) has a PowerVR BXM-4-64 at **BVNC 36.56.104.183**, the same core revision as the A733. Every open-stack piece made for the K3 (firmware, Mesa BVNC support, the kernel support line) also fits the A733. Only the SoC glue differs: clocks, resets, power domains, the DT node.
+
+| Piece | State on 2026-10-29 | Source |
+|---|---|---|
+| DT binding | `spacemit,k3-gpu` sits in the `img,img-bxm-4-64` enum next to `thead,th1520-gpu`; `spacemit,k1-gpu` is under `img,img-bxe-2-32`. Merged as `16f30811a935` (Baihui Liang, 2026-10-15), on mainline master and linux-next. | `Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml`; patchwork "add spacemit,k1-gpu and spacemit,k3-gpu" (accepted) |
+| Driver support line | 36.56.104.183 is **not** in `pvr_gpu_support_level()` in mainline or linux-next. A K3 patch to probe without power domains is pending (lkml 2607.3/06720). | `drivers/gpu/drm/imagination/pvr_device.c` |
+| `exp_hw_support` | Module parameter of `powervr`. For an unknown BVNC without it, probe fails with "Unknown GPU! Set 'exp_hw_support' to bypass this check." (-ENODEV); with it, the driver warns "Running on unknown hardware; expect issues." and continues. An EXPERIMENTAL entry gives "Unsupported GPU! ..." instead. Use `modprobe powervr exp_hw_support=1` (mainline-based driver or apercel). The Orange Pi 6.6 driver has no BVNC table, so Route L does not need it. | `pvr_device.c` |
+| Firmware | Imagination's open-source build for 36.56.104.183 is **fw 1.1 build 6976702**. Not in linux-firmware main (which has 33.15.11.3, 36.52.104.182 and 36.53.104.796 only). It lives in Imagination's fork (gitlab.freedesktop.org/imagination/linux-firmware, `powervr` branch), and BayLibre vendors it. | `src/firmware/imagination-fw-1.1/` (fetch group `fw`) |
+| Mesa | docs.mesa3d.org lists 36.56.104.183 in the "in active development" table. The conformance line says Vulkan 1.2 is conformant on 36.52.104.182 and BXS-4-64 only, so other GPUs need `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`. The 2026-10-28 code read found no switch entry yet (section 16.7). | Mesa docs; `BayLibre/mesa` |
+| Android | BayLibre's AOSP **android-17** for the K3 Muse Pico-ITX: upstream `drm/imagination` + fw 1.1 + Mesa ≥ 26.1. Its README says every peripheral is ported and build-green, and **hardware validation is pending the real board**. So it is a reference config, not a proven stack. | `src/baylibre-k3` @ `06c4578e`, `src/baylibre-common` @ `755c243b` |
+
+**Firmware files for BVNC 36.56.104.183.** Both are info v3 with the open-source flag. The `fw_version` fields come from the `pvr_fw_info_header` at `size − 4096`.
+
+| File | Version | Size | sha256 | Where |
+|---|---|---|---|---|
+| Allwinner libgpu `gpu-firmware/powervr/rogue_36.56.104.183_v1.fw` | 1.0 build 6852738 | 126,976 B | `3974e79f…` | `src/libgpu` (group `ref`); Route L's default |
+| Imagination `rogue_36.56.104.183_v1.fw` (via BayLibre `firmware/powervr/`, commit `a09d86fe`) | **1.1 build 6976702** | 131,072 B | `1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2` | `src/firmware/imagination-fw-1.1/` (group `fw`); Route M, and BOARD-DAY step 4c |
+
+Both use the same name and path (`/lib/firmware/powervr/rogue_36.56.104.183_v1.fw`), so only one is installed at a time. The driver prints the one it loaded: `FW version v1.0 (build 6852738 OS)` or `FW version v1.1 (build 6976702 OS)`. The firmware is matched to the GPU core, not the SoC, so the K3 file should boot on the A733. That is a board-day test (BOARD-DAY step 4c), not a fact yet.
+
+**BayLibre's GPU stack** (`src/baylibre-common/device-common.mk`, `src/baylibre-k3/device.mk`). Route M copies this into redroid.
+- HALs: `android.hardware.composer.hwc3-service.drm`, `android.hardware.graphics.allocator-service.minigbm`, `mapper.minigbm`.
+- Mesa: `libGLES_mesa`, `libGLESv1_CM_mesa`, `libGLESv2_mesa`, `libgallium_dri`, `vulkan.mesa`, `libgbm_mesa`, `dri_gbm`, `vulkan_mesa_icd`, `libgbm_mesa_wrapper`, `zink_dri`, `powervr_dri`. GLES runs on Zink over the PowerVR Vulkan driver.
+- Properties: `ro.hardware.egl=mesa`, `ro.hardware.vulkan=mesa`, `debug.hwui.renderer=skiavk`, `debug.renderengine.backend=skiavkthreaded`, `vendor.gralloc.minigbm.backend=gbm_mesa`, `vendor.mesa.gbm_backends_path=/vendor/lib64/gbm`, `ro.hardware.gralloc=minigbm`, `ro.opengles.version=196608` (GLES 3.0).
+- `ro.surface_flinger.protected_contents=false`: Mesa PowerVR has no protected memory, and without this SurfaceFlinger aborts.
+- `/dev/pvr_sync 0660 system graphics` in `ueventd.k3.rc`.
+- The firmware is copied to `/vendor/firmware/powervr/`. In redroid the host kernel loads firmware from the host's `/lib/firmware`, so this line does not carry over.
+- The Mesa prebuilts are riscv64. For the A733, rebuild Mesa for arm64.
+
+**Route M plan** (after Route L passes on the board):
+1. Host: keep Route L's `powervr.ko` (or apercel, or a mainline-based build with `exp_hw_support=1`). Try both firmware files (BOARD-DAY 4b and 4c) and keep the one that boots.
+2. Host Mesa: `vulkaninfo --summary` with `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`. Use Mesa main if it has 36.56.104.183, otherwise apercel's patch.
+3. redroid: build Mesa (imagination Vulkan + Zink) and minigbm `gbm_mesa` for arm64 Android 13. Set the BayLibre properties above, then pass `/dev/dri/renderD128` (and `card0` if hwc3 needs it) into the container. redroid 13's own tree ships only ANGLE + `vulkan.pastel` (`src/device_redroid-13/redroid.mk`); its host-GPU mode is Mesa over gbm. So Route M replaces redroid's Mesa build; it does not add a new gralloc model.
+4. Check `dumpsys SurfaceFlinger` for the GLES/Vulkan renderer strings, then run the two apps.
+- Risks: the Vulkan driver is non-conformant; GLES-on-Zink overhead; Android 13 vs BayLibre's Android 17 HAL versions (hwc3 and minigbm AIDL exist on 13, but check the versions); and the BayLibre stack is not hardware-validated.
+
+**What the YouTube comments (2026-10) claimed, checked:**
+- "Only a proprietary driver exists": false. Upstream `drm/imagination` + Mesa cover this BVNC as work in progress, Imagination ships open firmware for it, and BayLibre builds a fully open Android with it.
+- "René Rebe is working on BXM-4-64 on the K3": unconfirmed. The K3 binding is by Baihui Liang, and the Android stack is BayLibre's. We found nothing by René Rebe.
+- "Mainlined in Linux 7.3 or 7.5, in linux-next": only partly true. The K3 binding is on master (for 7.4). The BVNC support line is in neither mainline nor linux-next, and nothing A733-specific for the GPU has been posted.
+- "Using the GPU on 6.6.98-2-aw2511": plausible on the vendor BSP kernel, the same 6.6.98 base as Route L and apercel. It is not mainline.
+
+**Upstream contribution ideas, refined:**
+1. `Tested-by` on the K3 BVNC support line when it is posted, run on the Zero 3W.
+2. An A733 GPU node and compatible once the A733 dtsi and CCU land (section 16.3).
+3. A Mesa A733 test report, if the K3 entry lands first.
+
+### 16.9 Keep checking: `scripts/60-mainline-watch.py`
+
+Run from the farm folder on any PC with internet (Python 3, stdlib only):
+
+```sh
+python3 -I scripts/60-mainline-watch.py
+```
+
+It prints one line per check, marks changes since the last saved run with `*`, and lists new patchwork hits as `NEW`. It saves `out/mainline-watch/<date>.json`. `out/` is git-ignored, so the first run on a new PC has no baseline, and every value prints as unchanged. Compare by hand against the table below.
+
+| Check | Source | Baseline 2026-10-29 |
+|---|---|---|
+| `sun60i` DTS files | cgit `arch/arm64/boot/dts/allwinner`, mainline + next | none |
+| A733 CCU driver | cgit `drivers/clk/sunxi-ng` | none |
+| drm/imagination supported BVNCs | `pvr_device.c`, `pvr_gpu_support_level` | 33.15.11.3, 36.52.104.182, 36.53.104.796 |
+| 36.56.104.183 in driver | same file | no |
+| GPU binding allwinner / k3 | `img,powervr-rogue.yaml` | `spacemit,k1-gpu`, `spacemit,k3-gpu` (no Allwinner) |
+| AXP318W in `axp20x.c` | `drivers/mfd/axp20x.c` | no |
+| A733 in `sunxi-mmc.c` | `drivers/mmc/host/sunxi-mmc.c` | no |
+| linux-firmware `powervr/` | gitlab.com API, main | `rogue_33.15.11.3_v1.fw`, `rogue_36.52.104.182_v1.fw`, `rogue_36.53.104.796_v1.fw` |
+| Mesa docs, 36.56.104.183 | docs.mesa3d.org PowerVR page | listed, table "in active development" |
+| U-Boot `mach-sunxi` | GitHub API, master | no sun60i / a733 files |
+| patchwork `a733`, `axp318`, `sun60i`, `k3-gpu`, `36.56.104` | patchwork.kernel.org API, newest 6 | A733 UART v2 (handled-elsewhere, 2026-10-19), A733 pinctrl I/O-voltage fixes (new, 2026-10-12/13), CCU v6 (2026-10-09), AXP318W v8 (2026-09-10), K3 GPU binding (accepted, 2026-10-15), no `36.56.104` hits |
+
+What to watch for, in order of value to us:
+1. **36.56.104.183 in `pvr_gpu_support_level`** (driver patch, probably from the K3 side): Route M then needs no `exp_hw_support`.
+2. **`rogue_36.56.104.183_v1.fw` in linux-firmware main**: distros then ship the firmware.
+3. **AXP318W in `axp20x.c`** and **the A733 CCU**: the prerequisites for any mainline A733 board.
+4. **A `sun60i` DTS**: the start of a mainline Zero 3W DTS.
+
+Not covered by the script: lore.kernel.org and gitlab.freedesktop.org (both block scripts with a bot check). Check Mesa main's `pvr_physical_device.c` and Imagination's linux-firmware fork in a browser.
 
