@@ -52,8 +52,8 @@ Only the board can decide:
    ./scripts/00-fetch-sources.sh apercel && ./scripts/22-build-apercel.sh   # -> out/apercel/ (4 modules + SHA256SUMS)
    SECURE_CONFIG=0 ./scripts/20-build-pvrsrvkm-android.sh                   # -> out/deploy/lib/modules/pvrsrvkm-android-nosecure.ko (Route A fallback)
    ./scripts/23-build-mesa-android.sh && ./scripts/32-make-redroid-mesa-context.sh            # -> out/redroid-mesa/ (Route M, step 8)
-   VARIANT=apercel ./scripts/23-build-mesa-android.sh && VARIANT=apercel ./scripts/32-make-redroid-mesa-context.sh
-   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-mesa out/redroid-mesa-apercel out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
+   VARIANT=perf ./scripts/23-build-mesa-android.sh && VARIANT=perf ./scripts/32-make-redroid-mesa-context.sh   # optional: apercel too
+   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-mesa out/redroid-mesa-perf out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
 4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run:
@@ -87,7 +87,7 @@ Only the board can decide:
 8. **Optional, separate boot: Route M, the open stack inside redroid** (README 16.13). It needs apercel on the host instead of `pvrsrvkm`, so keep `pvrsrvkm` from loading at boot, then undo that afterwards:
    - Before rebooting: `sudo mv /etc/modules-load.d/pvrsrvkm.conf ~/farm/ && echo 'blacklist pvrsrvkm' | sudo tee /etc/modprobe.d/farm-route-m.conf && sudo reboot`. After boot, `lsmod | grep pvrsrvkm` must be empty.
    - Host driver: load apercel with fw 1.1 exactly as in step 4a.
-   - Image: `cd ~/farm/redroid-mesa && sudo docker build -t redroid-mesa:13 .`. For the variant with CheezeCS's Vulkan 1.3 features, use `~/farm/redroid-mesa-apercel` and tag `redroid-mesa-apercel:13`.
+   - Image: `cd ~/farm/redroid-mesa && sudo docker build -t redroid-mesa:13 .`. If that boots, try the perf variant the same way (`~/farm/redroid-mesa-perf`, tag `redroid-mesa-perf:13`) and compare smoothness and `dumpsys gfxinfo` (README 16.15). The apercel variant is only for comparison: it trips a Mesa assertion (README 16.14).
    - One instance: `sudo docker run -itd --privileged --name android-m -p 5557:5555 redroid-mesa:13 androidboot.redroid_gpu_mode=host androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 androidboot.redroid_fps=30 androidboot.use_memfd=1`.
    - Check:
      - `adb connect <ip>:5557`

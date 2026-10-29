@@ -7,7 +7,7 @@
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 VARIANT=${VARIANT:-base}                 # base, or apercel (see 23-build-mesa-android.sh)
-SFX=$([ "$VARIANT" = apercel ] && echo -apercel || true)
+case "$VARIANT" in base) SFX= ;; apercel|perf) SFX=-$VARIANT ;; *) echo "VARIANT: base, apercel or perf"; exit 1 ;; esac
 B=$FARM/out/mesa-build/android-arm64$SFX
 E=$FARM/out/toolchains/mesa-host
 N=$FARM/out/toolchains/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin

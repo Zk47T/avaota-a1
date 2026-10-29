@@ -6,16 +6,19 @@
 # README section 16.14. Needs the toolchain and source from 23-build-mesa-android.sh.
 #
 #   ./scripts/24-mesa-shim-probe.sh               base variant
-#   VARIANT=apercel ./scripts/24-mesa-shim-probe.sh
+#   VARIANT=apercel ./scripts/24-mesa-shim-probe.sh     (or perf)
+#   ASSERTS=1 ./scripts/24-mesa-shim-probe.sh     a separate build with Mesa's asserts on, for the
+#                                                 smoke test (mesa_glsmoke.c) to catch driver bugs
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 T=$FARM/out/toolchains
 E=$T/mesa-host
 VARIANT=${VARIANT:-base}
-SFX=$([ "$VARIANT" = apercel ] && echo -apercel || true)
+case "$VARIANT" in base) SFX= ;; apercel|perf) SFX=-$VARIANT ;; *) echo "VARIANT: base, apercel or perf"; exit 1 ;; esac
 M=$FARM/src/mesa$SFX
 TOOLS=$T/mesa-compiler$SFX
-X=$FARM/out/mesa-build/x86-shim$SFX
+ASSERTS=${ASSERTS:-0}
+X=$FARM/out/mesa-build/x86-shim$SFX$([ "$ASSERTS" = 1 ] && echo -asserts || true)
 L=$T/libdrm-sys
 R=$FARM/out/mesa-shim-results
 JOBS=${JOBS:-$(nproc)}
@@ -41,15 +44,17 @@ fi
 if [ ! -f "$X/build.ninja" ]; then
   (cd "$M" && env -u PKG_CONFIG_PATH PATH="$TOOLS/bin:$E/bin:$PATH" LD_LIBRARY_PATH="$E/lib" \
      PKG_CONFIG_PATH="$L/lib/pkgconfig:$E/lib/pkgconfig:$E/share/pkgconfig" CC=/usr/bin/gcc CXX=/usr/bin/g++ \
-     meson setup "$X" . -Dbuildtype=debugoptimized -Db_ndebug=true \
+     meson setup "$X" . -Dbuildtype=debugoptimized -Db_ndebug=$([ "$ASSERTS" = 1 ] && echo false || echo true) \
      -Dplatforms= -Degl=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dglx=disabled -Dgbm=enabled \
      -Dgallium-drivers=zink -Dvulkan-drivers=imagination -Dimagination-srv=false -Dtools=drm-shim \
      -Dmesa-clc=system -Dprecomp-compiler=system -Dllvm=disabled -Dvalgrind=disabled -Dlibunwind=disabled)
 fi
 env PATH="$TOOLS/bin:$E/bin:$PATH" LD_LIBRARY_PATH="$E/lib" ninja -C "$X" -j"$JOBS"
-gcc -o "$X/mesa_glver" "$FARM/scripts/mesa_glver.c" -I"$M/include" \
-  -L"$X/src/egl" -L"$X/src/mesa/glapi/es2api" -lEGL -lGLESv2 \
-  -Wl,-rpath,"$X/src/egl:$X/src/mesa/glapi/es2api"
+for t in mesa_glver mesa_glsmoke; do
+  gcc -o "$X/$t" "$FARM/scripts/$t.c" -I"$M/include" \
+    -L"$X/src/egl" -L"$X/src/mesa/glapi/es2api" -lEGL -lGLESv2 \
+    -Wl,-rpath,"$X/src/egl:$X/src/mesa/glapi/es2api"
+done
 
 run() {
   env LD_LIBRARY_PATH="$L/lib:$X/src/gallium/targets/dri:$E/lib" \
@@ -58,6 +63,10 @@ run() {
       VK_ICD_FILENAMES="$X/src/imagination/vulkan/powervr_mesa_devenv_icd.x86_64.json" \
       VK_LOADER_LAYERS_DISABLE='*' "$@" 2>&1 | grep -v 'Loader Message\|DISPLAY'
 }
+TAG=$VARIANT$([ "$ASSERTS" = 1 ] && echo -asserts || true)
+run "$X/mesa_glsmoke" > "$R/glsmoke-$TAG.txt" || true
+tail -3 "$R/glsmoke-$TAG.txt"
+[ "$ASSERTS" = 1 ] && exit 0
 run "$E/bin/vulkaninfo" > "$R/vulkaninfo-$VARIANT.txt"
 run "$X/mesa_glver" > "$R/glver-$VARIANT.txt"
 EXTS=1 run "$X/mesa_glver" | grep '^EXT' | tr ' ' '\n' | grep '^GL_' | sort > "$R/gles31-extensions-$VARIANT.txt"

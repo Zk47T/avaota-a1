@@ -94,7 +94,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 22-build-apercel.sh              open host GPU driver apercel + 3 DRM helper modules -> out/apercel/
 │   ├── 23-build-mesa-android.sh         Route M: Mesa 26.3 PowerVR + Zink for redroid 13 arm64 (VARIANT=apercel)
 │   ├── 24-mesa-shim-probe.sh            Route M without a board: Vulkan features + Zink GL level via drm-shim
-│   ├── mesa_glver.c                     (used by 24)
+│   ├── mesa_glver.c, mesa_glsmoke.c     (used by 24: highest GL/GLES context; GLES 3.1 smoke test)
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
 │   ├── redroid_link_check.py            (used by 26)
@@ -803,3 +803,33 @@ So **the base build already reaches GLES 3.1**, the same as CheezeCS measured wi
 - **redroid 16 has the same GPU stack.** `redroid/redroid:16.0.0_64only-250627` (API 36, cached in `out/cache/`) ships the same Mesa 24.0.8 prebuilts, gbm_gralloc via allocator 2.0 / mapper 2.1, the same fake composer, and an rc that forces `debug.renderengine.backend gles`. So moving Route M to redroid 16 changes only the Android base. Rebuild with `-Dplatform-sdk-version=36`; the rc could then switch RenderEngine to `skiavk`.
 
 Results are saved in `out/mesa-shim-results/` (`vulkaninfo-*.txt`, `glver-*.txt`, `gles31-extensions-*.txt`).
+
+### 16.15 A third Mesa variant: BayLibre's low-risk performance commits, and a smoke test (2026-10-29)
+
+BayLibre's `android-17-pvr-perf` branch (`f0cabdd9b56`, 2026-10-10) adds about 60 commits on top of their Android support series, mostly in the pco compiler (co-issue scheduling, a preamble pass, preloads, register allocation). Rebasing all of them onto 26.3 stops at real conflicts:
+- `f06b124f32b` (barrier wakeups): 26.3 already has its own fix, `8834fe3b869`.
+- `3309d19e2e5`: already fixed in 26.3.
+- `93a96eb1aa6`: needs moving into 26.3's restructured query code.
+- `420692eda74`: conflicts with 26.3's rewritten NIR options.
+
+A hand-merged compiler cannot be tested without a GPU, so I stopped there.
+
+**`VARIANT=perf`** is base plus the 9 commits that apply cleanly and mostly touch the driver rather than the compiler:
+- `46289980731` don't wait for the previous submit on the CPU (CPU/GPU pipelining);
+- `6a1840a4f8e` and `aaf1e9240a0` reuse spill, scratch and SPM buffers across draws and renders;
+- `0fd143219a7` merge DMAs of adjacent vertex attributes;
+- `3da4a58fbff` and `3b86bb3287d` buffer-copy alignment fixes;
+- `45c083bc13e` 8/16-bit scaled vertex formats;
+- `3bfbc068020` egl/android: hide `EGL_KHR_no_config_context` below ES 3;
+- `afff9ee1d1d` a pco source-modifier fix.
+
+`9f4d4939b86` ("skip fragment shaders with no effect") conflicts, so it is left out. Build: `VARIANT=perf ./scripts/23-build-mesa-android.sh` (worktree `src/mesa-perf`, own host tools). It also passes the redroid 13 link check with 0 problems and reaches GLES 3.1 on the shim.
+
+**Smoke test.** `ASSERTS=1 ./scripts/24-mesa-shim-probe.sh` (with `VARIANT=` as needed) builds a separate shim copy with Mesa's asserts on and runs `scripts/mesa_glsmoke.c`. That is GLES 3.1 work typical of apps, 120 frames into a 720×1280 two-target framebuffer:
+- texturing with mipmaps, a UBO, discard, blending, `dFdx`, instanced draws;
+- a compute shader with shared memory and `barrier()`;
+- periodic `glReadPixels`.
+
+It can't check pixels, but it runs the real Zink → SPIR-V → pco compile, pipeline creation, command recording and submission. **base: OK. perf: OK** (no assert, no GL error). The apercel variant fails at Vulkan start with the timeline assertion (section 16.14).
+
+**Variant order for BOARD-DAY step 8:** base first (closest to upstream), then perf (expected faster, same feature level), apercel only to compare.

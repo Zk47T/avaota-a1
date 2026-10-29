@@ -10,6 +10,9 @@
 #       Mesa 26.3 patch (Vulkan 1.3 features and limits, compiler fixes; GLES 3.1 via Zink
 #       on a Zero 3W), in its own worktree src/mesa-apercel and build dirs *-apercel.
 #       Needs ./scripts/00-fetch-sources.sh apercel.
+#   VARIANT=perf ./scripts/23-build-mesa-android.sh   base plus 9 low-risk commits from BayLibre's
+#       android-17-pvr-perf branch (queue pipelining, scratch/spill reuse, copy fixes, an EGL
+#       Android fix), worktree src/mesa-perf. README section 16.15.
 #
 # Needs: micromamba at out/toolchains/micromamba (or MICROMAMBA=/path), git, curl, unzip.
 # Output: out/mesa-build/android-arm64 (meson build dir); 32-make-redroid-mesa-context.sh packages it.
@@ -19,11 +22,11 @@ T=$FARM/out/toolchains
 B=$FARM/out/mesa-build
 M0=$FARM/src/mesa
 VARIANT=${VARIANT:-base}
-SFX=$([ "$VARIANT" = apercel ] && echo -apercel || true)
+case "$VARIANT" in base) SFX= ;; apercel|perf) SFX=-$VARIANT ;; *) echo "VARIANT: base, apercel or perf"; exit 1 ;; esac
 M=$FARM/src/mesa$SFX
 E=$T/mesa-host                      # conda-forge env: LLVM/clang 19, SPIRV, meson, python
 TOOLS=$T/mesa-compiler$SFX          # host mesa_clc, vtn_bindgen2, pco_clc, pdsc_precomp (the
-                                    # apercel patch changes the pco compiler, so its own copy)
+                                    # apercel and perf variants change the pco compiler: own copy)
 NDK=$T/android-ndk-r29
 STEP=${STEP:-all}
 JOBS=${JOBS:-$(nproc)}
@@ -36,6 +39,14 @@ BL_TIP=92f674847202c757a07adfeb7d4bbfbf8bc1922c       # android-17-pvr-support, 
 BL_BASE=82b868960e00805e800ee164e6696a9fa57e92b9      # its fork point on main
 BL_SKIP=992647d02eabe6c309e8835bbd36f485e6161385      # riscv64-only cross-file tuning
 BL_OURS=583ce30933e11ee6743b18251c92fd02b9d41307      # one-line extension-list conflict: keep 26.3's side
+BL_PERF=f0cabdd9b5683daee75ad9a253fd71154f739278      # android-17-pvr-perf, 2026-10-10
+# From BL_PERF, the commits that apply cleanly onto our branch and touch the driver
+# rather than rewrite the compiler (the compiler series conflicts with 26.3):
+PERF_PICKS=(afff9ee1d1d778330dcdee0e506d8e8fb8d91fbf 3da4a58fbff5a6fcc10823bb4a065716f5abaef8
+  3b86bb3287da3422d9f9a8a62da996707822267a 3bfbc0680206cf21d841765715ffa6ef1a957df5
+  462899807315f751de5011d09b275e8f0f08e9ac 0fd143219a72cf3b49191a41701b47311a676bf3
+  45c083bc13e3f881164234cacfad4352e45f22dd 6a1840a4f8ed295577964f256cee9c91d24a4bd1
+  aaf1e9240a01d362d0bdb0919ded3bd610683677)
 NDK_SHA1=87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b      # from dl.google.com repository2-3.xml
 PKGS=(python=3.12.16 meson=1.12.1 ninja=1.13.2 mako=1.4.3 pyyaml=6.0.3 packaging pkg-config=0.29.2
       cmake llvmdev=19.1.7 clangdev=19.1.7 libllvmspirv=19.1.13 spirv-tools=2026.4
@@ -83,6 +94,16 @@ PY
   # apercel renames the DRM driver to "apercel"; keep "powervr" and accept both instead.
   sed -i 's/^#define PVR_DRM_DRIVER_NAME "apercel"$/#define PVR_DRM_DRIVER_NAME "powervr"/' \
     "$M/src/imagination/vulkan/winsys/pvr_winsys.h"
+  git -C "$M" apply "$FARM/config/mesa-pvr-accept-apercel-drm-name.patch"
+fi
+
+if [ "$STEP" = all ] && [ "$VARIANT" = perf ] && [ ! -e "$M/.git" ]; then
+  # the perf commits' blobs live only on BayLibre's remote: let lazy fetches use it
+  git -C "$M0" config remote.baylibre.promisor true
+  git -C "$M0" config remote.baylibre.partialclonefilter blob:none
+  git -C "$M0" fetch -q --filter=blob:none baylibre "$BL_PERF"
+  git -C "$M0" worktree add -q --detach "$M" a733-android-26.3
+  for c in "${PERF_PICKS[@]}"; do git -C "$M" cherry-pick -x "$c" >/dev/null; done
   git -C "$M" apply "$FARM/config/mesa-pvr-accept-apercel-drm-name.patch"
 fi
 
