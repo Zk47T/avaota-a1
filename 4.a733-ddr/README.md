@@ -160,6 +160,20 @@ python3 -E scripts/analyze.py --csv-out
 python3 -E scripts/boot0_tool.py show src/orangepi-build/external/packages/pack-uboot/sun60iw2/bin/boot0_sdcard_orangepizero3w.fex
 ```
 
+## 5b. Other people's A733 DRAM work (GitHub survey, 2026-10-29)
+
+`[U]` = claimed, not shown.
+
+| Project | What it does with DRAM | Use for us |
+|---|---|---|
+| `InfernoEmbedded/u-boot` (Orange Pi 4 Pro, up to 2026-10-09) | `dram_sun60i_a733.c`: an SPL driver for the two uMCTL2 controllers and the DWC PHY over its 16-bit APB. Loads PMU training firmware into ICCM `0x0a9a0000` / DCCM `0x0a9b0000` with the standard Synopsys message block. Training-time numbers suggest it ran `[U]`, but there are no boot logs. | **The closest thing to an open A733 LPDDR5 init**, and a direct comparison for section 4. **Licence caution:** an archive branch holds the vendor 64 KiB IMEM blob and a 5,425-entry register replay taken from boot0, and a commit names a Ghidra function, so it is probably decompiled vendor code. Read it to compare; don't copy it. |
+| `DockSeed/a733-bootchain` (Cubie A7S, 2026-10-24) | Boots without boot0. Its AArch32 SPL copies Radxa's closed `ddr.bin` (232,409 B, V0.6036, pinned by sha256) to SRAM `0x90000`, calls it, and gets the DRAM size in MiB back. Reports LPDDR5 at 2400 MHz (6 GB) and 2040 MHz (8 GB). | A working **upstream-style chain (SPL → TF-A → U-Boot) with the DRAM step isolated as one call**: the slot an open init would replace. Shows the `ddr.bin` calling convention. |
+| `vamrs-feng/sunxi-ddrbin` (Radxa) | `ddr.bin` ends in a DTB with up to 16 `/dram/paraN` sets of the 32 boot0-style fields (clock, type, MRs, `tpr*`). Exports a set and adds new ones. | Real parameter sets to diff against the Zero 3W boot0 header (section 1). |
+| `lukaszsobala/radxa-cubie-a7s-android` | A7S Android `sys_config.fex` DRAM section: 2400 MHz, type 9 (LPDDR5). | Another known-good parameter set. |
+| `Rabs9/radxa-cubie-a7a-kernel` | Cubie A7A DRAM at 2040 MHz passes memtester after raising VDD2; 2400 MHz failed training on that board. | Speed bins differ per board and DRAM part: the reason Orange Pi ships 1800 and 2400 MHz boot0s. |
+| `opentina-org/build` (Allwinner's own mainline-based SDK: U-Boot 2026.01 SPL, TF-A + OP-TEE, Linux 6.18.14) | Still ships boot0; its SPL only reads the size boot0 left. | Even Allwinner keeps DRAM init closed. |
+| FEL tools (`003-ZH114/a733-fel-emmc`, `skitzo2000/esp32-a7s-fel`) | FEL runs at full speed (~300 KiB/s); SRAM below `0x51000` is protected by the BROM; xfel has no A733 DRAM init. Loading boot0 over FEL initialises DRAM and returns to FEL. | The FEL path for running our frozen-training experiments without an SD card. |
+
 ## 6. Unknowns `[?]`
 
 - That `0x58009` low byte is HdtCtrl and `0x58008` is SequenceCtrl. Inferred from NXP's values at the same addresses; confirm against your i.MX95 notes.

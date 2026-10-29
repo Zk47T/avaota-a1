@@ -352,13 +352,23 @@ Reading:
 - The Zero 3W has no such connector. Its FPC is **PCIe 3.0 x1** (official spec: "1 x PCIe 3.0 1-Lane FPC socket"), and the A733 has no internal Ethernet PHY: its GMAC needs an external PHY, like the YT8531 on the Orange Pi 4 Pro. So the hat's Ethernet cannot work, and mismatched pins could put supply voltage on the PCIe lanes.
 - Wired network options for the Zero 3W:
   - the **USB-C GbE dongle** already planned (RTL8153, `r8152` module; `45-usb-net.sh`). Two instances need a few Mbit/s each, so USB GbE is plenty.
-  - A **PCIe FPC adapter + PCIe NIC**. The stock Zero 3W DT enables the PCIe root complex (`pcie@6000000`, Gen3 x1) and its combo PHY. But the FPC pinout is not documented as Raspberry Pi 5-compatible (check the Zero 3W schematic before buying a Pi 5 HAT), and our kernel config has `CONFIG_R8169` off; it is a one-line addition to the fragment.
+  - A **PCIe FPC adapter + PCIe NIC**. The stock Zero 3W DT enables the PCIe root complex (`pcie@6000000`, Gen3 x1) and its combo PHY.
+    - **The connector is an 18-pin, 0.5 mm FPC** (Molex 52746-1870), per the netlist of the open `Techburst36/orangepi-zero3w-m2-carrier` (designed, not yet built).
+    - **Its pins 1–16 follow the Raspberry Pi 5 16-pin PCIe pinout exactly**, checked against Raspberry Pi's connector spec: 5V, 5V, GND, CLK±, GND, RX±, GND, TX±, GND, PWR_EN, DET_WAKE, CLKREQ#, PERST#. Pins 17–18 are GND.
+    - So a Pi 5 PCIe HAT (NVMe, 2.5GbE) needs an 18→16-pin adapter or a custom cable; a 16-pin Pi cable does not fit.
+    - Expect Gen3 training trouble on A733. The vendor BSP has a Gen3 speed-change issue: `28andrew` and edk2-a733 had to force Gen1, and `TblP/orangepi-uboot-fix` found the 4 Pro's U-Boot enabling the wrong PMIC rail for M.2. Our kernel has `CONFIG_R8169` off: a one-line fragment change.
+    - For 2 instances the USB-C GbE dongle stays the simple choice.
 
 | Per board (6 GB) | Wired network | Other I/O | Size | Local price (2026-10-29) / official | Notes |
 |---|---|---|---|---|---|
 | Orange Pi Zero 3W | none: USB-C GbE dongle | 1× USB 3.1 Type-C (DP alt), PCIe FPC | 65 × 32 mm | **2.4 tr** + dongle / $60 | the pilot board; boot0 runs LPDDR5 at 2400 MHz |
 | **Orange Pi Zero 4** | **GbE RJ45 onboard** | — | small | **2.4 tr** / $63 | Orange Pi's build gives it **the Zero 3W's boot0** (`sun60iw2.conf`), so DRAM at 2400 MHz too |
 | Orange Pi 4 Pro | GbE RJ45 (YT8531), optional PoE module | 1× USB 3.0 + 3× USB 2.0 host, M.2 M-key PCIe 3.0 (NVMe), eMMC socket | 89 × 56 mm | **2.7 tr** / $40 | no board-specific boot0, so Orange Pi's build falls back to the generic `boot0_sdcard_a733.fex`: DRAM at **1800 MHz**, about 25% less memory bandwidth |
+
+Farm-relevant notes from other A733 projects (GitHub survey 2026-10-29):
+- **Hardware video decode is usable:** Allwinner's `libvdecoder` returns a dma-buf per frame (`Jiarbuz/a733-zero-copy`, about 8% CPU for display through DRM), and an FFmpeg Cedar patch decodes 1080p HEVC at 147 fps on the Zero 3W (`jeffspiinthesky`). This supports the section 8.1 plan to give the containers the video engine instead of software decoding.
+- **Vendor GLES bug:** DDK 24.2@6603887 advertises `GL_EXT_texture_storage`, but `glTexStorage2DEXT` resolves to NULL and apps crash (`drydeuterium/pvr-gles-shim`). That is the Linux DDK; check whether Route A's Android DDK 6643903 has the same problem.
+- Every vendor stack found (Radxa, Orange Pi, LineageOS work for the Cubie A7A) uses DDK 24.2. Mainline `powervr` with Imagination's open firmware runs on the A733 in two more kernels (DockSeed 6.18, nickyg666 6.18).
 
 All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.dtb` are all in our tree), images and scripts. **At local prices, the Zero 4 is the farm board:** same price as the Zero 3W, GbE onboard (no dongle, no USB failure point), and the same 2400 MHz DRAM. The 4 Pro costs 0.3 tr more for PoE, NVMe and USB-A, which the farm doesn't need, and its DRAM runs 25% slower unless the DDR study shows it can run faster. The Zero 3W stays the pilot, course and upstream board.
 

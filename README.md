@@ -1450,6 +1450,15 @@ Allwinner's `meta-tina` (`t736-demo`: `AW_CHIP = sun60iw2p1`, `sun60iw2p1_t736_d
 | Ethernet | After their EDK2 boot the vendor kernel's Ethernet dies. Not solved; they found and fixed an over-written MBUS/AHB master-gate bug (`0xb10103f8` / `0xf0050803` are the vendor values) along the way. |
 | Console | Orange Pi 4 Pro: UART7 (R_UART0, PL6/PL7, `0x07080000`) on header pins 8/10, which nothing in the boot chain enables. **The Zero 3W instead uses UART0 on PB9/PB10** (`sys_config.fex` `uart_debug_port = 0`), and boot0 enables it. |
 
+**Other A733 projects on GitHub** (survey 2026-10-29 of about 30 repos; `[U]` = claimed, not shown):
+- **Boot chain without boot0:** `DockSeed/a733-bootchain` (Cubie A7S): Radxa's U-Boot `u-boot-dlan17` (v2026.07 + 73 commits) + 17 patches, upstream TF-A + 17 patches (Jernej Škrabec's A733 series), BL31 in SRAM at `0x62000`, no SCP. DRAM is still Radxa's closed `ddr.bin`, called from the SPL (details in `4.a733-ddr` §5b).
+- **Kernels:**
+  - `DockSeed/a7s-linux-lts`: 6.18.59 + 263 out-of-tree patches (CCU, PCIe RC, display/DP, MMC HS400, IOMMU, thermal), with mainline `powervr` running the A733 GPU on Imagination's open firmware.
+  - `nickyg666/orangepi-zero3w-mainline`: Zero 3W on 6.18 with vendor CCU/pinctrl/PMIC drivers; mainline `powervr` + Mesa Vulkan/Zink work; no PCIe. Its 7.3-rc2 builds need `VA_BITS=39`, because the vendor BL31 panics with 52-bit VA.
+- **Other UEFI and OS work:** `beg0fthend/edk2-a733` is the original EDK2 port that vehoelite's fork builds on. `0Re0-8192/a733-edk2` + `a733-windows-arm64` claim Windows 11 ARM64 to the desktop from SD `[U]`.
+- **Upstream trackers** (`GrecAndrei/sun60iw2-upstream`, `crescenzo77/…`): nothing newer than CCU v6 / DTS v1.
+- **`opentina-org/build`:** Allwinner's own mainline-based SDK (U-Boot 2026.01 SPL, TF-A + OP-TEE, Linux 6.18.14). It still needs boot0.
+
 Their "v2" plan (port BSP MMC, then PCIe + combo PHY, then USB PHY to a mainline kernel) overlaps the upstream series in section 3.11: MMC binding merged, CCU v6 and AXP318W in review, pinctrl for 7.4. Anyone working on it should start from those series.
 
 ---
