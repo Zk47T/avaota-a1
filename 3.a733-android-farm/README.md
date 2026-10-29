@@ -316,6 +316,33 @@ Why route B is worth it:
   - Revisit the Zero 4 6 GB for boards 2 and 3 if it becomes available.
   - The same Zero 3W is also the DDR-study and upstream board (main README 3.11).
 
+### 8.2 Board choice revisited: A733 vs RK3588 vs RK3399, local prices 2026-10-29
+
+Prices are the user's local quotes in million VND ("tr"). Instance counts are estimates from section 8.1: 1.3–1.9 GB RAM per instance, and about one A76-class core per instance that plays video with software decoding. CPU "units" = A76 @ 2.0 GHz = 1; A55 @ 1.8 GHz ≈ 0.38; A76 @ 2.4 GHz ≈ 1.2; A72 @ 1.8 GHz ≈ 0.68; A53 @ 1.4 GHz ≈ 0.27.
+
+| SoC | CPU units | RAM bus | GPU | GPU in redroid today |
+|---|---|---|---|---|
+| A733 (2×A76 + 6×A55) | ≈ 4.3 | 32-bit LPDDR5 (A733 manual) | BXM-4-64 MC1 | not proven: Route A (vendor DDK, deadlock reports) or Route M (our Mesa build) |
+| RK3588/RK3588S (4×A76 @ 2.4 + 4×A55) | ≈ 6.3 | 64-bit | Mali-G610 MP4, several times the BXM-4-64 | proven: vendor 6.1 kernel + libmali images (`cnflysky/redroid-rk3588`, `/dev/mali0`), or mainline panthor + Mesa panfrost/panvk (upstream Mesa has Android support, so scripts 23/32 could be retargeted) |
+| RK3399 (2×A72 + 4×A53) | ≈ 2.4 | 64-bit LPDDR4 | Mali-T860 MP4 | panfrost is in redroid's own Mesa and its `gpu_config.sh` list; GLES 3.1, no Vulkan |
+
+| Option | Price | Instances (est.) | tr per instance | Notes |
+|---|---|---|---|---|
+| 3 × Orange Pi 4 Pro A733 6 GB | 7.8 | 6 | 1.30 | cheapest on paper; 3 PSUs and 3 network ports; GPU path unproven |
+| 1 × Orange Pi 5 Plus 8 GB | 6.6 | 4 (RAM-bound) | 1.65 | cannot hold 6 TikTok instances in 8 GB |
+| 1 × Orange Pi 5 Plus 16 GB | 10.3 | 6 (CPU-tight with software decode) | 1.72 | 2× 2.5GbE, PCIe 3.0 x4 NVMe |
+| 1 × Orange Pi 5 Pro 16 GB | 9.6 | 6 (CPU-tight) | 1.60 | LPDDR5 |
+| 2 × Orange Pi 5 Pro 8 GB (if 4.7 tr is the 8 GB price; the 5 Pro comes in 4/8/16 GB, not 6) | 9.4 | 8 (6 with headroom) | 1.18 | best balance if that price holds |
+| 2 × Orange Pi 5 4 GB | 7.2 | 4 | 1.80 | RAM-bound |
+| 1 × Orange Pi 5B 16 GB / 128 GB eMMC | 12.8 | 6 (CPU-tight) | 2.13 | storage included |
+| 1 × Orange Pi 4 LTS RK3399 4 GB | 2.0 | 1–2 | 1.0–2.0 | old and weak; useful as a fully mainline learning board, not for the farm |
+
+Reading:
+- **RK3399 vs A733 at a similar price: A733.** It has about 1.8× the CPU, 6 GB LPDDR5 instead of 4 GB, and newer cores. RK3399's only advantages are full mainline support and panfrost working in stock redroid.
+- **One RK3588 with 8 GB does not reach 6 instances; RAM limits it.** Two RK3588 boards with 8 GB each give the same CPU per instance as 3 × A733 (about 1.6 units) plus a much stronger GPU and twice the memory bus, with a GPU path that already works in redroid.
+- One RK3588 with 16 GB fits 6 instances in RAM, but its 4 A76 cores are tight for 6 software video decoders. That changes only if the Rockchip video decoder (MPP) is wired into the containers.
+- **Plan:** let the Zero 3W board day decide. If Route A or M runs TikTok smoothly on 2 instances, the A733 stays the cheapest per instance. If not, move the farm to RK3588 (2 × 8 GB, or 1 × 16 GB for lighter apps), and keep the A733 as the course and upstream board.
+
 ## 9. On the A733 board
 
 1. Flash the Orange Pi Debian **trixie 1.0.2 server** image (`Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z`; Debian 13.6, kernel 6.6.98-sun60iw2). It has no PowerVR driver; the kit provides it.
