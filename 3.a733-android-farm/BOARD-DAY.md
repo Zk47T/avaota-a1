@@ -50,34 +50,37 @@ Only the board can decide:
    cp src/firmware/imagination-fw-1.1/rogue_36.56.104.183_v1.fw out/fw/1.1/
    sha256sum out/fw/*/rogue_36.56.104.183_v1.fw   # 1.0: 3974e79f…  1.1: 1db1c399…
    ./scripts/00-fetch-sources.sh apercel && ./scripts/22-build-apercel.sh   # -> out/apercel/ (4 modules + SHA256SUMS)
+   SECURE_CONFIG=0 ./scripts/20-build-pvrsrvkm-android.sh                   # -> out/deploy/lib/modules/pvrsrvkm-android-nosecure.ko (Route A fallback)
    rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
 4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run:
    - Read the power-domain state first: `sudo devmem 0x07065008` (PD 5, GPU_TOP) and `sudo devmem 0x07066008` (PD 6, GPU_CORE). `0x8` means on. `devmem` may need `sudo apt install busybox` or `devmem2`. Read them again after the load.
    - Firmware (apercel's own path): `sudo install -D -m 0644 ~/farm/fw/1.1/rogue_36.56.104.183_v1.fw /lib/firmware/apercel/rogue_36.56.104.183_v1.fw`.
-   - Modules: `cd ~/farm/apercel && sha256sum -c SHA256SUMS && sudo mkdir -p /lib/modules/$(uname -r)/extra && sudo cp *.ko /lib/modules/$(uname -r)/extra/ && sudo depmod -a`. Check `uname -r` says `6.6.98-sun60iw2-redroid` first.
-   - Load by hand, in order: `sudo modprobe gpu-sched && sudo modprobe drm_exec && sudo modprobe drm_shmem_helper && sudo modprobe apercel no_autosuspend=1`. Do **not** install apercel's `conf/99-apercel.conf`: it blacklists `pvrsrvkm`, which step 5 needs.
+   - Check the files and the kernel: `cd ~/farm/apercel && sha256sum -c SHA256SUMS && uname -r` (must say `6.6.98-sun60iw2-redroid`).
+   - Load with `insmod` from `~/farm`, in this order: `sudo insmod gpu-sched.ko && sudo insmod drm_exec.ko && sudo insmod drm_shmem_helper.ko && sudo insmod apercel.ko no_autosuspend=1`.
+   - **Don't copy the test modules into `/lib/modules` or run `depmod` for them.** All the GPU drivers match `img,gpu`, so udev would autoload whichever it finds at the next boot: that breaks Route A (`pvrsrvkm`), and a firmware that hangs the board would hang it again on every boot. With `insmod`, a power cycle undoes the test. Likewise, do **not** install apercel's `conf/99-apercel.conf`: it blacklists `pvrsrvkm`, which step 5 needs.
    - Expect in `dmesg`: `FW version v1.1 (build 6976702 OS)`, and a new `/dev/dri/renderD*` node. `cat /sys/kernel/debug/dri/*/name` shows `apercel`. Save `dmesg > ~/farm/apercel-fw1.1.dmesg` and `cat /proc/interrupts | grep -i gpu >> ~/farm/apercel-fw1.1.dmesg`.
    - Optional, 30–45 min: host Vulkan. `sudo ~/farm/armbian-a733-gpu/files/mesa/a733-build-mesa --apercel ~/farm/apercel-src --prefix /opt/mesa-apercel` (copy the sources first, from the build PC: `rsync -a src/apercel/ orangepi@<ip>:~/farm/apercel-src/ && rsync -a src/armbian-a733-gpu orangepi@<ip>:~/farm/`), then `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1 VK_ICD_FILENAMES=$(ls /opt/mesa-apercel/share/vulkan/icd.d/*.json) vulkaninfo --summary`. A prefix outside `/usr/local` keeps it away from the system.
    - Unload before 4b: `sudo rmmod apercel`. All open drivers bind `img,gpu`.
 4b. **Route L, comparison (README 16.6).** Orange Pi's own, older driver copy:
    - Read the power-domain state: `sudo devmem 0x07065008` (PD 5, GPU_TOP) and `sudo devmem 0x07066008` (PD 6, GPU_CORE). `0x8` means on. `devmem` may need `sudo apt install busybox` or `devmem2`.
    - Install the firmware: `sudo install -D -m 0644 ~/farm/fw/1.0/rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`. This is the libgpu file, fw 1.0, sha256 `3974e79f…`.
-   - Install the modules, once per board: `sudo mkdir -p /lib/modules/6.6.98-sun60iw2-redroid/extra && sudo cp ~/farm/route-l/*.ko /lib/modules/6.6.98-sun60iw2-redroid/extra/ && sudo depmod -a`. Check `uname -r` first, and `cd ~/farm/route-l && sha256sum -c SHA256SUMS` after the copy.
-   - Load the module: `sudo modprobe powervr`. It is built on the build PC against this kernel (`out/route-l/`, not run yet). `modprobe` loads the three helpers first.
+   - Load with `insmod`, not `depmod` (see 4a): `cd ~/farm/route-l && sha256sum -c SHA256SUMS && sudo insmod powervr.ko`. The three helpers from 4a are still loaded and are the same code. If you skipped 4a, first `sudo insmod gpu-sched.ko`, `drm_exec.ko` and `drm_shmem_helper.ko` from `~/farm/route-l`. `powervr.ko` is built on the build PC against this kernel (`out/route-l/`, not run yet).
    - Check: `dmesg | grep -i -E 'powervr|loaded firmware|FW version|deferring'`, `ls /dev/dri`, and `cat /sys/kernel/debug/dri/*/name` (expect `powervr`).
    - Expect `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`, plus a `renderD128` node.
    - Save the result: `dmesg > ~/farm/route-l-fw1.0.dmesg`.
    - If you skip 4c, unload now: `sudo rmmod powervr`. Both drivers bind `img,gpu`, so step 5 needs it gone.
 4c. **Optional: Imagination fw 1.1 (README 16.8).** Do this only after 4b, whether 4b passed or failed. Step 4a already runs fw 1.1 with apercel; this tells us whether Orange Pi's older driver copy runs it too. The vendor driver accepts any major-1 file (`FW_MAX_SUPPORTED_MAJOR_VERSION 1`, `pvr_fw.c:26`, minor not checked), so the header passes. What we learn is whether the firmware boots with this driver.
-   - Swap the file: `sudo rmmod powervr`, then `sudo install -D -m 0644 ~/farm/fw/1.1/rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`, then `sudo dmesg -C && sudo modprobe powervr`.
+   - Swap the file: `sudo rmmod powervr`, then `sudo install -D -m 0644 ~/farm/fw/1.1/rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`, then `sudo dmesg -C && sudo insmod ~/farm/route-l/powervr.ko`.
    - Expect `FW version v1.1 (build 6976702 OS)` and a `renderD128` node. Save `dmesg > ~/farm/route-l-fw1.1.dmesg`.
-   - If the board hangs on 1.1, power-cycle. Nothing persistent changed apart from the firmware file.
+   - If the board hangs on 1.1, power-cycle. Nothing persistent changed apart from the firmware file, and nothing loads the open drivers at boot.
    - Then put back the file that worked best (1.0 if both work, because Route L was planned with it): `sudo rmmod powervr` (if loaded) and reinstall from `~/farm/fw/1.0/`. Leave `powervr` unloaded for step 5: both drivers bind `img,gpu`.
+4d. **Reboot before step 5** (`sudo reboot`). The open-driver tests leave the GPU in an unknown state, and nothing loads them at boot (4a). Never `rmmod` or reload `pvrsrvkm` on a live GPU: on the Zero 3W that hangs the board until a power cycle (README 16.12).
 5. **Start the stack.** `./40-board-setup.sh run`. It installs the GPU driver and firmware, loads the image, sets the CPU and memory layout, and starts two instances (`android1` on adb port 5555, `android2` on 5556).
 6. **Read the report.** `./50-board-report.sh`. Each line is PASS, WARN or FAIL. The evidence (dmesg, logcat, SurfaceFlinger dump, props) is saved under `~/farm/reports/<time>/`.
-7. **Look from the laptop.** `adb connect <ip>:5555` and `adb connect <ip>:5556`, then `adb -s <ip>:5555 shell getprop ro.hardware.egl` and `adb exec-out screencap -p > s1.png`.
+7. **Look from the laptop.** `adb connect <ip>:5555` and `adb connect <ip>:5556`, then `adb -s <ip>:5555 shell getprop ro.hardware.egl` and `adb exec-out screencap -p > s1.png`. Keep the serial console attached: with the vendor Linux DDK, a CPU screen grab while the GPU renders can deadlock the kernel (README 16.12). Take one screenshot on an idle screen first, then one while an app animates, and note if the board stops answering.
+   - Route A's GPU clock: `dmesg | grep -i 'clk_rate'` should show `change default clk_rate to max opp freq:1008000000`.
 
 ## 4. How to read the result
 
@@ -101,7 +104,7 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 | Containers do not reach `boot_completed` | Check `docker logs android1` and `adb logcat`. Try the software fallback below. |
 | Second instance slow or killed | Stop it (`sudo docker rm -f android2`), check `free -m` and `docker stats`. |
 | USB Ethernet gives no link | `lsusb`, then `dmesg | grep -i -E "rtl|r8152"`, then `sudo modprobe r8152`. |
-| `deferring` in dmesg after `modprobe powervr` | The firmware file is missing or in the wrong path. Check `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). |
+| `deferring` in dmesg after `insmod powervr.ko` | The firmware file is missing or in the wrong path. Check `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). |
 | `Unsupported fw info version 2` or `FW info format mismatch` | Wrong firmware file. The Radxa and Android `rgx.fw` copies are info v2 and are not for Route L. |
 | `FW built for incorrect GPU ID` | Firmware for another BVNC. Route L needs 36.56.104.183. |
 | `Unsupported FW version 1.1 ...` (step 4c) | The driver refuses the 1.1 header. Not expected with the Orange Pi driver (it checks only major ≤ 1). Keep the line, go back to fw 1.0. |
@@ -110,10 +113,11 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 | apercel: `Unknown symbol drm_sched_*` (or `drm_exec_*`, `drm_gem_shmem_*`) | The three helper modules from `out/apercel/` are missing or not loaded first. Load them in the order of step 4a. |
 | apercel: firmware `deferring` or `not found` | apercel reads `/lib/firmware/apercel/`, not `/lib/firmware/powervr/`. |
 | `Unknown GPU! Set 'exp_hw_support' to bypass this check.` | Only with a mainline-based driver (apercel, or a mainline build), never with Route L's Orange Pi driver. 36.56.104.183 is not in mainline's support list yet. Reload with `exp_hw_support=1` (for example `sudo modprobe powervr exp_hw_support=1`); the driver then warns `Running on unknown hardware; expect issues.` |
-| Board hangs when the GPU starts (Route A) | Likely an SError from a blocked secure-register write. Run Route L first and keep the serial log. |
+| Board hangs when the GPU starts (Route A) | Likely an SError from a blocked secure-register write. Keep the serial log, power-cycle, then try the fallback without our secure-reset port: `sudo install -D -m644 ~/farm/deploy/lib/modules/pvrsrvkm-android-nosecure.ko /lib/modules/$(uname -r)/extra/pvrsrvkm.ko && sudo depmod -a && sudo reboot`. Radxa's Linux DDK, which has no such writes, runs on the Zero 3W. |
+| Board hangs during a screenshot or scrcpy (Route A) | The vendor-DDK deadlock other Zero 3W users hit with a live compositor (README 16.12). Power-cycle, keep the serial log (look for `mutex_spin_on_owner`), and note what was on screen. |
 | PD 5 or PD 6 reads `0x0` after probe | The power domain is off, so the GPU is unpowered. Check the PCK-600 probe in `dmesg`. |
-| `Module gpu-sched not found` (or `drm_exec`, `drm_shmem_helper`) after `modprobe powervr` | Step 4b's copy and `sudo depmod -a` were skipped, or the copy went to another kernel's directory. Check `uname -r`. |
-| `Unknown symbol` or `version magic` from `modprobe powervr`, or the same in `dmesg` | The module was built for another kernel. `modinfo -F vermagic /lib/modules/$(uname -r)/extra/powervr.ko` must say `6.6.98-sun60iw2-redroid`. |
+| `Unknown symbol drm_sched_*` (or `drm_exec_*`, `drm_gem_shmem_*`) from `insmod powervr.ko` | The three helper modules are not loaded. `insmod` them first (step 4a or 4b). |
+| `Invalid module format` / `version magic` from `insmod`, or the same in `dmesg` | The module was built for another kernel. `readelf -p .modinfo powervr.ko` (or `apercel.ko`) must show `vermagic=6.6.98-sun60iw2-redroid`, matching `uname -r`. |
 
 **Software fallback (GPU not working).** Edit `40-board-setup.sh`: change `androidboot.redroid_gpu_mode=host` to `guest` in the `docker run` lines, then `sudo docker rm -f android1 android2` and `./40-board-setup.sh run`. Everything except the GPU still gets tested.
 

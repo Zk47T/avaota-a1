@@ -88,7 +88,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw apercel)
 │   ├── 10-build-host-kernel.sh          kernel + fragment
 │   ├── 15-package-kernel-deb.sh         -> linux-image/dtb/headers .deb
-│   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch)
+│   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch; SECURE_CONFIG=0 = fallback without it)
 │   ├── 22-build-apercel.sh              open host GPU driver apercel + 3 DRM helper modules -> out/apercel/
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
@@ -505,15 +505,15 @@ Five ways to drive this GPU on our board, ordered by evidence and by how much ea
 | Route | Driver | Firmware | Userspace | Status |
 |---|---|---|---|---|
 | **L** Linux host | Orange Pi 6.6 BSP `bsp/drivers/gpu/imagination` (`CONFIG_AW_DRM_POWERVR=m`), binds `img,gpu` | `/lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (libgpu, v3, open-source) | Unpatched Mesa ≥ 25.3 (≥ 26.3 for GLES 3.x via Zink) with `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1`. Not apercel's Mesa patch (driver name `apercel`), not libgpu's DDK libraries (section 16.7). | Comparison test after apercel. Module builds (2026-10-28, `out/route-l/` on the build PC); not run. |
-| **A** redroid | kit's `pvrsrvkm-android.ko` (Android DDK 6643903) | `/lib/firmware/rgx.fw.36.56.104.183` (Android copy) | Android blobs in the container | Built, never run. Keeps the PPU, secure and bit-27 writes. |
+| **A** redroid | kit's `pvrsrvkm-android.ko` (Android DDK 6643903) | `/lib/firmware/rgx.fw.36.56.104.183` (Android copy) | Android blobs in the container | Built, never run. Keeps the PPU, secure and bit-27 writes. Fallback without the secure port: `pvrsrvkm-android-nosecure.ko` (`SECURE_CONFIG=0`, section 16.12). Risk: the vendor-DDK deadlock seen with live compositors (16.12). |
 | apercel (**now first host test**, section 16.10) | out-of-tree kbuild module `apercel`; use the CheezeCS fork (+30 upstream fixes), `scripts/22-build-apercel.sh` | `/lib/firmware/apercel/rogue_36.56.104.183_v1.fw`: Imagination fw 1.1 (fetch group `fw`) | Mesa 26.3 with the fork's `mesa/apercel-mesa-26.3.0-rc2.patch` (GLES 3.1 via Zink) | **Proven on an Orange Pi Zero 3W** by CheezeCS (2026-10-25, same vendor kernel tree, same firmware). Not yet on ours. |
 | Radxa DKMS (reference) | DDK 6603887, Rogue style, for 5.15 | Radxa `rgx.fw` (v2, not open-source) | Radxa libraries | Not for our 6.6 kernel. |
 | **M** open stack (planned) | Route L's driver, or `apercel` / mainline `drm/imagination` (`exp_hw_support=1` until the BVNC is listed) | Imagination **fw 1.1 build 6976702** (`src/firmware/imagination-fw-1.1/`, sha256 `1db1c399…`) | redroid overlay with Mesa 26.3 PowerVR Vulkan + Zink (BayLibre's Android commits rebased), redroid's own gbm_gralloc and fake composer (section 16.11) | Plan only. Start after apercel or Route L shows the GPU probes and its firmware boots. |
 
 **Route L, step by step.** Step 1 runs on the build PC.
 1. Build PC, done 2026-10-28 in a copy of the kit tree (`/mnt/project/route-l-build/linux-orangepi-6.6`; the kit tree itself was not changed). `CONFIG_AW_DRM_POWERVR=m` and `make olddefconfig` add three helper modules that the kit's `.config` did not have: `CONFIG_DRM_EXEC=m`, `CONFIG_DRM_GEM_SHMEM_HELPER=m` and `CONFIG_DRM_SCHED=m`. Five config lines change in all (`out/route-l/config-delta.txt`). Then `make modules_prepare`, `make modules` and `make M=bsp/drivers/gpu/imagination modules` all exit 0. The one warning is an unused variable in the BSP's `drm_gpuvm.c`. `powervr.ko` has vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`, needs `gpu-sched`, `drm_shmem_helper` and `drm_exec`, and matches `img,gpu` (`of:N*T*Cimg,gpuC*`). MODVERSIONS is off in the kit config, so a load checks vermagic only. The four modules and their hashes are in `out/route-l/` on the build PC (`SHA256SUMS`). Not run on hardware yet.
-2. Board: install the modules and the firmware. Copy the four modules from `out/route-l/` (`powervr.ko`, `gpu-sched.ko`, `drm_shmem_helper.ko`, `drm_exec.ko`) to `/lib/modules/6.6.98-sun60iw2-redroid/extra/`, then run `sudo depmod -a`. The kit's kernel package does not carry them, and the running kernel needs no rebuild. Then install the firmware with `sudo install -D -m 0644 rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`).
-3. Board: unload `pvrsrvkm` if it is loaded, then `sudo modprobe powervr`. `modprobe` loads `gpu-sched`, `drm_shmem_helper` and `drm_exec` first, from the `depmod` index.
+2. Board: install the firmware with `sudo install -D -m 0644 rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw` (sha256 `3974e79f…`). Keep the four modules in `~/farm/route-l/`: don't copy them into `/lib/modules` or run `depmod`, or udev autoloads an `img,gpu` driver at every boot and Route A loses the GPU (BOARD-DAY 4a).
+3. Board: unload `pvrsrvkm` or apercel if loaded, then `insmod` `gpu-sched.ko`, `drm_exec.ko`, `drm_shmem_helper.ko` (skip any already loaded) and `powervr.ko`.
 4. Check `dmesg` for `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`. Then `ls /dev/dri` (card0 and renderD128) and `cat /sys/kernel/debug/dri/*/name` (expect `powervr`).
 5. Userspace comes after the module works, and it is not libgpu's. libgpu's libraries are DDK 24.2 builds, and `libsrv_um` calls `DRM_IOCTL_PVR_SRVKM_INIT`, which the upstream UAPI (`pvr_drm.h`) does not define. Use unpatched Mesa ≥ 25.3 (Mesa finds the device by DRM name `powervr`, which this driver reports), then `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1 vulkaninfo --summary`. apercel's Mesa patch would look for `apercel` instead and find nothing. Not tried.
 6. PD readbacks before and after step 3: `devmem 0x07065008` and `devmem 0x07066008`. `0x8` means on.
@@ -615,7 +615,7 @@ It prints one line per check, marks changes since the last saved run with `*`, a
 | linux-firmware `powervr/` | gitlab.com API, main | `rogue_33.15.11.3_v1.fw`, `rogue_36.52.104.182_v1.fw`, `rogue_36.53.104.796_v1.fw` |
 | Mesa docs, 36.56.104.183 | docs.mesa3d.org PowerVR page | listed, table "in active development" |
 | Mesa newest release | docs.mesa3d.org release notes | 26.2.6 (26.3 = GLES 3.1 via Zink is still at rc; CheezeCS uses 26.3.0-rc2) |
-| apercel / CheezeCS heads, apercel issues | GitHub API | TumRedSun `e098b9f1ae16` (2026-10-20), CheezeCS/apercel `d03675d4a38e` (2026-10-25), armbian-a733-gpu `6960be508179` (2026-10-25); one issue (#1, the Zero 3W report) |
+| Community repo heads, apercel issues | GitHub API | TumRedSun/apercel `e098b9f1ae16` (2026-10-20), CheezeCS/apercel `d03675d4a38e` (2026-10-25), armbian-a733-gpu `6960be508179` (2026-10-25), bobyshamen-arch/pvr-a733 `60a60f43dc56` (2026-10-10), ayiejosh/a733-powervr-fex `0eb8099bf8b5` (2026-10-27), BayLibre/mesa `android-17-pvr-support` `92f674847202` (2026-10-03); one apercel issue (#1, the Zero 3W report) |
 | U-Boot `mach-sunxi` | GitHub API, master | no sun60i / a733 files |
 | patchwork `a733`, `axp318`, `sun60i`, `k3-gpu`, `36.56.104`, `drm/imagination` | patchwork.kernel.org API, newest 6 | A733 UART v2 (handled-elsewhere, 2026-10-19), A733 pinctrl I/O-voltage fixes (new, 2026-10-12/13), CCU v6 (2026-10-09), AXP318W v8 (2026-09-10), K3 GPU binding (accepted, 2026-10-15), no `36.56.104` hits; drm/imagination: FW-info query v4 and META/RISC-V firmware-header rework (2026-10-28) |
 
@@ -652,7 +652,7 @@ On 2026-10-25 a user (CheezeCS) reported the open stack **working on an Orange P
 5. **apercel's DRM driver name is `apercel`, not `powervr`.** Mesa finds the device by name only, so with apercel Mesa needs apercel's patch (`PVR_DRM_DRIVER_NAME`); without it `vulkaninfo` silently finds nothing. The reverse holds for Route L and mainline (`powervr`): use Mesa without that rename. Mesa ≥ 25.3 already knows 36.56.104.183, so the only other thing apercel's patch changes for us is extra features and limits. Check with `strings libvulkan_powervr_mesa.so | grep -x apercel`. The same applies inside redroid (Route M).
 6. **apercel's firmware path is `/lib/firmware/apercel/rogue_36.56.104.183_v1.fw`**, not `powervr/`.
 7. **Don't install apercel's `conf/99-apercel.conf` on a farm board.** It blacklists `pvrsrvkm`, which Route A needs. Load apercel by hand for the test (`softdep` order: `gpu_sched`, `drm_exec`, `drm_shmem_helper`; apercel option `no_autosuspend=1`).
-8. **Helper modules.** `DRM_SCHED`, `DRM_EXEC` and `DRM_GEM_SHMEM_HELPER` are prompt-less tristates in the Orange Pi tree, off in our config. `scripts/22-build-apercel.sh` builds them as external modules from the tree's own sources, then apercel. (Not run yet: building third-party code needs your OK on this PC; run it on the build PC.) The BTF-mismatch load failure CheezeCS hit does not apply to us: our config has `CONFIG_DEBUG_INFO_BTF` off.
+8. **Helper modules.** `DRM_SCHED`, `DRM_EXEC` and `DRM_GEM_SHMEM_HELPER` are prompt-less tristates in the Orange Pi tree, off in our config. `scripts/22-build-apercel.sh` builds them as external modules from the tree's own sources, then apercel. **Built on 2026-10-29** against our kernel tree: all four modules have vermagic `6.6.98-sun60iw2-redroid SMP preempt mod_unload aarch64`; no unresolved symbols; no export clashes with vmlinux (apercel's own GPUVM copy exports `*_img` names, while vmlinux exports the old 6.6 `drm_gpuva_*` API). `apercel.ko` sha256 `f496a182…` (all hashes in `out/apercel/SHA256SUMS`). The A733 code path is compiled in (`CONFIG_ARCH_SUN60IW2=y`). The BTF-mismatch load failure CheezeCS hit does not apply to us: our config has `CONFIG_DEBUG_INFO_BTF` off.
 9. **GPU IRQ.** apercel's boot hook pins `IRQGPU` to the last big core (cpu7). In our farm layout cpu7 belongs to instance 2 and cpu0 takes host IRQs (section 8.1). Measure both placements on the board before choosing.
 
 **Upstream notes found on the way:**
@@ -691,3 +691,36 @@ How redroid 13 does host-GPU mode today (image `13.0.0_64only-240527`, checked i
 3. Static checks like scripts 25/26: every `NEEDED` library resolvable in the `sphal` namespace.
 4. Board: apercel or Route L on the host, then the overlay container. Look at `dumpsys SurfaceFlinger` (GLES renderer = Zink on PowerVR), then the apps.
 5. If gbm_gralloc + Zink allocation fails: the vendor rebuild (GloDroid minigbm patches, mapper 4, VINTF), or move Route M to redroid 14+.
+
+### 16.12 More A733 GPU work in the community, and what it means for Routes A and M (checked 2026-10-29)
+
+A GitHub search for A733 GPU projects found several more boards and stacks besides CheezeCS (section 16.10):
+
+| Repo (last commit) | Board | Stack | Key findings |
+|---|---|---|---|
+| `ayiejosh/a733-powervr-fex` (`trixie`, 2026-10-27) | Radxa Cubie A7A/A7S, Debian 13, 6.6 BSP | Vendor Linux DDK (`img-bxm-dkms` from Radxa) + their PRIME-import patch, Mesa/Zink on `libVK_IMG`, FEX, DXVK | Off-screen GPU (Vulkan, D3D9–11, Zink) works. **A live GPU compositor through `pvrsrvkm` deadlocks the kernel** (`mutex_spin_on_owner` in IRQ, power cycle needed). The same class of hang comes from `scrot` while a GPU app runs and from `DXVK_HUD`. Overlays: GPU 600 → 1104 MHz, DSU/L3 780 → 1027 MHz (`dramread` +38%). |
+| `Haidegger22/opi-zero3w-gpu-tuning` (2026-10-19) | **Orange Pi Zero 3W**, Debian 13, `6.6.98-sun60iw2` | Vendor Linux DDK + PRIME patch | Vendor `pvrsrvkm` works on the Zero 3W (GLES, Vulkan 1.3, Chromium/ANGLE). apercel worked too (Vulkan 1.3) but only off-screen under X11. **Unloading or reloading `pvrsrvkm` on a live GPU hangs the board.** glmark2-es2 522 → 602 with the overlays. |
+| `davidhfrankelcodes/pvr-a733-armbian` (2026-10-01) | **Orange Pi Zero 3W**, Armbian | Same vendor recipe | `clpeak` about 35 GFLOPS fp32. Same compositor deadlock. The closed Linux driver runs at 600 MHz unless the DT has `clk_rate`; a 1008 MHz overlay scales throughput about 1:1. |
+| `bobyshamen-arch/pvr-a733` (2026-10-10) | Radxa Cubie A7A, Armbian, `6.6.98-vendor-sun60iw2` | **drm/imagination from Linux 7.3-rc6** backported to 6.6, `exp_hw_support=1`, **unmodified Mesa main** | Runtime suspend/resume, firmware resets on faults, 200–1008 MHz (`a733_clk_mhz`). Its DRM name stays `powervr`, so stock Mesa works. Compute only; display not tested. |
+| `nickyg666/orangepi-zero3w-mainline` (2026-08-18) | **Orange Pi Zero 3W** | Linux 6.18.19 + vendor BSP drivers merged | Boots with vendor CCU/pinctrl/UART; patched DT for mainline `sunxi-mmc`; notes that mainline has no AXP8191 (= AXP318W, section 16.5) driver. No GPU. |
+
+**Mainline also has an A733 GPU result.** Commit `b462a227d854` ("pmdomain: sunxi: support power domain flags for pck600", Yuanshen Cao, 2026-05-10) marks the A733 **GPU_CORE domain as always-on** in the mainline PCK-600 driver. The commit message says this was needed "while bringing up the PowerVR GPU on the A733 (Radxa Cubie A7Z)", that the GPU then worked, and thanks Icenowy. So:
+- A mainline A733 GPU node needs only GPU_TOP: the single-power-domain group of the binding (with the K3 and TH1520) fits. Only the clock count differs (the A733 has a module clock and a bus gate).
+- In our vendor DT, `pd_gpu_core@6` is absent from the power controller (checked in the decompiled Zero 3W DTB), so the vendor kernel never touches PD 6. It stays as the boot code left it, and the Android driver's manual PPU write turns it on.
+
+**DT check for apercel (done here):** the Zero 3W DTB's `gpu@1800000` (`img,gpu`) provides everything apercel requests:
+- clocks `clk_parent`, `clk`, `clk_bus`, `clk_800`…`clk_200`;
+- interrupts `IRQGPU` and `IRQGPUDVFS`;
+- one reset;
+- `power-domains = <&pd 5>`;
+- OPP table 400/600/800/1008 MHz at 800/800/840/960 mV;
+- `gpu-supply` = AXP8191 `dcdc4` (always-on);
+- a `gpu_thermal_zone`.
+
+**What this changes for us:**
+1. **Route A risk: the compositor deadlock.** It was seen with the Linux-flavour DDK 6603887 when a compositor scans out to HDMI. redroid has no scanout (SurfaceFlinger renders into buffers that the fake composer hands on), and our DDK is the Android flavour 6643903. So the trigger may be absent, but the "CPU reads a GPU buffer while the GPU renders" case (`scrot`) has an equivalent in `screencap` and scrcpy. On board day, keep the serial console attached during step 7, and take a screenshot while an app animates.
+2. **Never `rmmod` or reload `pvrsrvkm` on a live GPU**, and reboot after the open-driver tests before step 5 (BOARD-DAY).
+3. **The secure-reset patch may be unnecessary.** Radxa's Linux DDK, which has no secure writes, runs on the Zero 3W. So a fallback without our port is now built here: `SECURE_CONFIG=0 ./scripts/20-build-pvrsrvkm-android.sh` writes `out/deploy/lib/modules/pvrsrvkm-android-nosecure.ko` (vermagic `6.6.98-sun60iw2-redroid`; the build tree has no patch marker, while the main tree has one). Use it if Route A hangs at GPU start.
+4. **GPU clock in Route A:** our Android DDK build has `SUPPORT_LINUX_DVFS`, so `sunxi_get_opp()` sets the start clock to the top OPP (1008 MHz) instead of the 600 MHz default that the Linux DKMS build falls back to. Check `dmesg` for `change default clk_rate to max opp freq`.
+5. **DSU at 780 MHz is a farm bottleneck to test later.** The vendor kernel has no DSU frequency driver. The overlay that raises it to 1027 MHz gave +38% DRAM read in their tests. Two Android instances are memory-bound, so measure it once the farm runs, with stability tests.
+6. **A second open driver for Route M:** `bobyshamen-arch/pvr-a733` is newer upstream code (7.3-rc6) and keeps the `powervr` DRM name, so stock Mesa plus BayLibre's Android commits would need no driver-name patch. Compare it with apercel (more backported fixes, proven on the Zero 3W) before choosing.

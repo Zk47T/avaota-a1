@@ -44,10 +44,12 @@ DUP=$( (sort "$W/exports.txt" | uniq -d; comm -12 "$W/exports.txt" "$W/vmlinux-e
 [ -z "$DUP" ] || { echo "duplicate exports, the load would fail:"; echo "$DUP"; exit 1; }
 
 (cd "$O" && sha256sum ./*.ko > SHA256SUMS)
+# Read .modinfo directly: the host's modinfo shows its own built-in module info
+# when a name matches (drm_shmem_helper is built into many distro kernels).
+mi() { "${CROSS_COMPILE}readelf" -p .modinfo "$1" | sed -n "s/^ *\[ *[0-9a-f]*\] *$2=//p"; }
 for k in "$O"/*.ko; do
-  printf '%-22s %s | depends: %s\n' "$(basename "$k")" "$(modinfo -F vermagic "$k")" "$(modinfo -F depends "$k")"
+  printf '%-22s %s | depends: %s\n' "$(basename "$k")" "$(mi "$k" vermagic)" "$(mi "$k" depends)"
 done
-modinfo -F alias "$O/apercel.ko" | grep '^of:' || true
-modinfo -F firmware "$O/apercel.ko" || true
-modinfo -F parm "$O/apercel.ko" || true
+mi "$O/apercel.ko" alias | grep '^of:' || true
+mi "$O/apercel.ko" parm || true
 echo "apercel source: CheezeCS/apercel $(git -C "$FARM/src/apercel" rev-parse --short=12 HEAD)"

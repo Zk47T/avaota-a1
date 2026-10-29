@@ -5,7 +5,8 @@
 
 Stdlib only. Sources: kernel.org cgit (torvalds, linux-next), U-Boot (GitHub mirror),
 linux-firmware (gitlab.com API), Mesa docs (docs.mesa3d.org), kernel.org patchwork,
-GitHub API (apercel and the CheezeCS fork proven on the Zero 3W, README 16.10).
+GitHub API (apercel, the CheezeCS fork proven on the Zero 3W, other A733 GPU repos, BayLibre Mesa;
+README 16.10-16.12).
 lore.kernel.org and gitlab.freedesktop.org are behind a bot check, so they are not used.
 """
 import datetime
@@ -80,8 +81,11 @@ def check():
     rel = get("https://docs.mesa3d.org/relnotes.html")
     vers = re.findall(r"relnotes/(\d+\.\d+\.\d+)\.html", rel)
     r["Mesa newest release (26.3+ = GLES 3.1 via zink)"] = vers[0] if vers else rel[:80]
-    for repo in ("TumRedSun/apercel", "CheezeCS/apercel", "CheezeCS/armbian-a733-gpu"):
-        js = get(f"https://api.github.com/repos/{repo}/commits?per_page=1")
+    for repo in ("TumRedSun/apercel", "CheezeCS/apercel", "CheezeCS/armbian-a733-gpu",
+                 "bobyshamen-arch/pvr-a733", "ayiejosh/a733-powervr-fex",
+                 "BayLibre/mesa@android-17-pvr-support"):
+        name, _, branch = repo.partition("@")
+        js = get(f"https://api.github.com/repos/{name}/commits?per_page=1" + (f"&sha={branch}" if branch else ""))
         try:
             c = json.loads(js)[0]
             r[f"{repo} head"] = f'{c["sha"][:12]} {c["commit"]["committer"]["date"][:10]}'
