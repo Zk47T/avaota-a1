@@ -373,7 +373,7 @@ These are **slot counts for game AFK and scripted account farms**, not 12 people
 - memory deduplication (KSM) across identical instances;
 - freezing or pausing instances nobody is looking at.
 
-So the user's own result (3 active instances, crash at 4) is consistent with them. Before buying such a box, ask for a demo of N instances **playing video at the same time**, with an FPS readout (`dumpsys gfxinfo`) and temperature after an hour, and ask whether idle instances are frozen.
+"Android in Container" demos that run **the same game in every instance** are the best case. These are real, separate Android instances, the same idea as redroid. But identical APKs and assets in a shared image layer share one page cache, identical heaps are what KSM merges best, and an AFK game renders little at a low frame rate, with no screen encoded unless someone is watching it. With hardware decoding, 12 × 720p video streams fit within the RK3588 VPU's pixel rate (8K60 decode); with software decoding they do not. So the user's own result (3 active instances, crash at 4) is consistent with them. Before buying such a box, ask for a demo of N instances **playing video at the same time**, with an FPS readout (`dumpsys gfxinfo`) and temperature after an hour, and ask whether idle instances are frozen.
 
 Density levers for our A733 boards, in order of gain:
 1. The Cedar video engine in the containers (section 8.1).
