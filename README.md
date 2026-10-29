@@ -1434,6 +1434,24 @@ Review notes on the Cubie A7S `.dtsi` v1:
 
 Allwinner's `meta-tina` (`t736-demo`: `AW_CHIP = sun60iw2p1`, `sun60iw2p1_t736_defconfig`, the same U-Boot defconfig Orange Pi uses for the Zero 3W) is a useful template. It isn't usable as is: it pulls sources from the surrounding Tina SDK tree (`${TOPDIR}/../..`) and its bundled GCC 10.3.
 
+### 3.12 Reusable A733 hardware facts from other projects (checked 2026-10-29)
+
+**`vehoelite/edk2-a733`** (EDK2 UEFI for the Orange Pi 4 Pro, BSD-2-Clause-Patent, largely AI-written, register findings checked on their board). Facts worth keeping; read their README and `research/` for the full traces:
+
+| Area | Finding |
+|---|---|
+| Boot | BROM → vendor BOOT0 (DRAM) → TF-A BL31 v2.5 → BSP U-Boot 2018.07 → EDK2. The DRAM blob stays. The BROM tries SD before SPI-NOR, which matches the A733 manual's boot-select table (`SMHC0 -> SPI0 NOR -> …`), so a bad SPI boot chain falls back to SD. |
+| Mainline | A stock Ubuntu 7.0 kernel boots via the EFI stub: 8 CPUs, GICv3, PSCI, `efifb` from their GOP. It then finds no block devices. That is the same gap as section 3.11: no A733 MMC/USB/PCIe drivers yet. |
+| Memory map | System RAM `0x40000000–0x1bfffffff` (6 GB). GICv3 distributor `0x03400000`, redistributor `0x03460000`. CCU `0x02002000`, SYSCFG `0x03000000`. |
+| SError traps | No SBSA generic watchdog at the architectural address: touching it raises an SError. Reading an **unclocked** PCIe DBI (`0x06000000`) stalls the bus and hangs the boot. Useful for the JTAG/SError notes (section 1). |
+| USB2 host | PHY bring-up order (from BSP `sunxi-hci.c`): assert PHY reset (CCU bit 30) → 200 µs → clear FORCE_SUSPEND (`+0x800`) → clear SIDDQ (`+0x810`) → passby/tune (`+0x800`, `+0x818`) → `0x53` to `+0x81C` → deassert reset → 1 ms. `HCI +0x824` bit 3 means "UTMI clock valid", not "device present". Also `SYSCFG +0x160 \|= BIT10` (USB tunnel enable) and `OTG +0x420 &= ~BIT0` (hand the OTG PHY to EHCI0). CCU values are in their table; `research/sun60iw2-ccu-phy-usb-snapshot.txt` is a full register snapshot from a working BSP boot. |
+| PCIe | `allwinner,sunxi-pcie-v300-rc` is a DesignWare core: DBI `0x06000000` (size `0x480000`), Cadence combo PHY at `0x06C00000`, which also serves USB3/xHCI.<br>Init order (BSP `pcie-sunxi-plat.c`): regulators (3.3 V, 1.8 V) → `pclk_rst`, `pwrup_rst` → `pclk_aux` → `pclk_slv` **at 400 MHz** → `its` reset and clock → combo PHY → only then touch DBI.<br>**DBI must be read 32 bits at a time;** wide reads return all-ones.<br>iATU: CFG0 at CPU `0x22200000` → bus 1, MEM at `0x22100000` identity.<br>The PCIe master sees DRAM with a **−`0x20000000`** CPU→bus offset; USB EHCI is identity.<br>Gen3 speed change can stall data-link-up; they pin Gen1, while the BSP kernel itself trains Gen3 with a WD SN7100.<br>Relevant for the farm if a PCIe NIC or NVMe goes on the Zero 3W FPC (farm README 8.3). |
+| Display | Reprogramming only the DE3.0 mixer0 layer-0 scanout address (`0x05101018`) and pulsing DBUFF apply (`0x05100008`) takes over the BSP-initialised panel. Scanout reads DRAM directly, so CPU writes need a cache clean. |
+| Ethernet | After their EDK2 boot the vendor kernel's Ethernet dies. Not solved; they found and fixed an over-written MBUS/AHB master-gate bug (`0xb10103f8` / `0xf0050803` are the vendor values) along the way. |
+| Console | Orange Pi 4 Pro: UART7 (R_UART0, PL6/PL7, `0x07080000`) on header pins 8/10, which nothing in the boot chain enables. **The Zero 3W instead uses UART0 on PB9/PB10** (`sys_config.fex` `uart_debug_port = 0`), and boot0 enables it. |
+
+Their "v2" plan (port BSP MMC, then PCIe + combo PHY, then USB PHY to a mainline kernel) overlaps the upstream series in section 3.11: MMC binding merged, CCU v6 and AXP318W in review, pinctrl for 7.4. Anyone working on it should start from those series.
+
 ---
 
 ## 4. Sources

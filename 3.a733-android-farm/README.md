@@ -354,13 +354,13 @@ Reading:
   - the **USB-C GbE dongle** already planned (RTL8153, `r8152` module; `45-usb-net.sh`). Two instances need a few Mbit/s each, so USB GbE is plenty.
   - A **PCIe FPC adapter + PCIe NIC**. The stock Zero 3W DT enables the PCIe root complex (`pcie@6000000`, Gen3 x1) and its combo PHY. But the FPC pinout is not documented as Raspberry Pi 5-compatible (check the Zero 3W schematic before buying a Pi 5 HAT), and our kernel config has `CONFIG_R8169` off; it is a one-line addition to the fragment.
 
-| Per board (6 GB) | Wired network | Other I/O | Size | Official price | Notes |
+| Per board (6 GB) | Wired network | Other I/O | Size | Local price (2026-10-29) / official | Notes |
 |---|---|---|---|---|---|
-| Orange Pi Zero 3W | none: USB-C GbE dongle | 1× USB 3.1 Type-C (DP alt), PCIe FPC | 65 × 32 mm | $60 | the pilot board; LPDDR5 boot0 at 2400 MHz |
-| Orange Pi Zero 4 | GbE RJ45 onboard | — | small | $63 | simplest cabling; not in the local shop |
-| **Orange Pi 4 Pro** | **GbE RJ45 (YT8531), optional PoE module** | 1× USB 3.0 + 3× USB 2.0 host, **M.2 M-key PCIe 3.0 (NVMe)**, eMMC socket | 89 × 56 mm | **$40** | local quote 2.6 tr; Orange Pi's generic boot0 runs its DRAM at **1800 MHz** (section 3 of `4.a733-ddr`), about 25% less memory bandwidth than the Zero 3W's 2400 MHz |
+| Orange Pi Zero 3W | none: USB-C GbE dongle | 1× USB 3.1 Type-C (DP alt), PCIe FPC | 65 × 32 mm | **2.4 tr** + dongle / $60 | the pilot board; boot0 runs LPDDR5 at 2400 MHz |
+| **Orange Pi Zero 4** | **GbE RJ45 onboard** | — | small | **2.4 tr** / $63 | Orange Pi's build gives it **the Zero 3W's boot0** (`sun60iw2.conf`), so DRAM at 2400 MHz too |
+| Orange Pi 4 Pro | GbE RJ45 (YT8531), optional PoE module | 1× USB 3.0 + 3× USB 2.0 host, M.2 M-key PCIe 3.0 (NVMe), eMMC socket | 89 × 56 mm | **2.7 tr** / $40 | no board-specific boot0, so Orange Pi's build falls back to the generic `boot0_sdcard_a733.fex`: DRAM at **1800 MHz**, about 25% less memory bandwidth |
 
-All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.dtb` are all in our tree), images and scripts. For a farm the **4 Pro** is the most practical: Ethernet and PoE onboard, NVMe instead of SD for `/data`, and the cheapest at official prices. Two things to check: whether its DRAM can run faster than 1800 MHz (a job for the DDR study), and the local price against Zero 3W + dongle. The Zero 3W stays the pilot, course and upstream board.
+All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.dtb` are all in our tree), images and scripts. **At local prices, the Zero 4 is the farm board:** same price as the Zero 3W, GbE onboard (no dongle, no USB failure point), and the same 2400 MHz DRAM. The 4 Pro costs 0.3 tr more for PoE, NVMe and USB-A, which the farm doesn't need, and its DRAM runs 25% slower unless the DDR study shows it can run faster. The Zero 3W stays the pilot, course and upstream board.
 
 ## 9. On the A733 board
 
