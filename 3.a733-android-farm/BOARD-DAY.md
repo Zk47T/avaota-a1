@@ -1,7 +1,7 @@
 # A733 board day: the first session
 
 > Written for: the person bringing up the first Orange Pi Zero 3W (6 GB) with the redroid + PowerVR farm.
-> Prepared in software on 2026-10-28, updated 2026-10-29 (Imagination fw 1.1 test, step 4c; open stack, README 16.8). Nothing here has run on hardware yet.
+> Prepared in software on 2026-10-28, updated 2026-10-29: apercel first (step 4a, already proven on another Zero 3W, README 16.10), Imagination fw 1.1 (step 4c), open stack (README 16.8). Nothing here has run on our hardware yet.
 
 ## 1. What is ready, and what the board must decide
 
@@ -12,6 +12,7 @@ Ready (built or checked without a board):
 - redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. **Never booted.**
 - Scripts: `40-board-setup.sh` (kernel, run), `45-usb-net.sh` (USB Ethernet), `50-board-report.sh` (PASS / WARN / FAIL report).
 - GPU routes, tested in this order (README section 16.6):
+  - **apercel** (host, open): CheezeCS's fork of apercel, upstream drm/imagination + 30 backported fixes, with Imagination fw 1.1. **Already works on another Orange Pi Zero 3W** with the same vendor kernel tree (README 16.10). Built by `scripts/22-build-apercel.sh` into `out/apercel/` (run it on the build PC first). This is now the first GPU test.
   - **Route L** (host): the Orange Pi 6.6 PowerVR driver, module `powervr.ko`, with Allwinner's open-source firmware `powervr/rogue_36.56.104.183_v1.fw`. This is the first GPU test. Built 2026-10-28 on the build PC (`out/route-l/`), with three helper modules (`gpu-sched`, `drm_shmem_helper`, `drm_exec`). Not run.
   - **Route A** (redroid): the kit's Android `pvrsrvkm` (DDK 24.2@6643903) with `rgx.fw` / `rgx.sh` 36.56.104.183.
   - **Route M** (later, not this session): the fully open stack, the same one BayLibre builds for the SpacemiT K3, which has the same GPU (README 16.8). Today only its firmware is tested (step 4c).
@@ -48,10 +49,19 @@ Only the board can decide:
    cp src/libgpu/gpu-firmware/powervr/rogue_36.56.104.183_v1.fw out/fw/1.0/
    cp src/firmware/imagination-fw-1.1/rogue_36.56.104.183_v1.fw out/fw/1.1/
    sha256sum out/fw/*/rogue_36.56.104.183_v1.fw   # 1.0: 3974e79f…  1.1: 1db1c399…
-   rsync -a out/deploy out/route-l out/fw out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
+   ./scripts/00-fetch-sources.sh apercel && ./scripts/22-build-apercel.sh   # -> out/apercel/ (4 modules + SHA256SUMS)
+   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
-4b. **GPU first, Route L (README 16.6).** Prove the GPU on the host before the redroid run:
+4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run:
+   - Read the power-domain state first: `sudo devmem 0x07065008` (PD 5, GPU_TOP) and `sudo devmem 0x07066008` (PD 6, GPU_CORE). `0x8` means on. `devmem` may need `sudo apt install busybox` or `devmem2`. Read them again after the load.
+   - Firmware (apercel's own path): `sudo install -D -m 0644 ~/farm/fw/1.1/rogue_36.56.104.183_v1.fw /lib/firmware/apercel/rogue_36.56.104.183_v1.fw`.
+   - Modules: `cd ~/farm/apercel && sha256sum -c SHA256SUMS && sudo mkdir -p /lib/modules/$(uname -r)/extra && sudo cp *.ko /lib/modules/$(uname -r)/extra/ && sudo depmod -a`. Check `uname -r` says `6.6.98-sun60iw2-redroid` first.
+   - Load by hand, in order: `sudo modprobe gpu-sched && sudo modprobe drm_exec && sudo modprobe drm_shmem_helper && sudo modprobe apercel no_autosuspend=1`. Do **not** install apercel's `conf/99-apercel.conf`: it blacklists `pvrsrvkm`, which step 5 needs.
+   - Expect in `dmesg`: `FW version v1.1 (build 6976702 OS)`, and a new `/dev/dri/renderD*` node. `cat /sys/kernel/debug/dri/*/name` shows `apercel`. Save `dmesg > ~/farm/apercel-fw1.1.dmesg` and `cat /proc/interrupts | grep -i gpu >> ~/farm/apercel-fw1.1.dmesg`.
+   - Optional, 30–45 min: host Vulkan. `sudo ~/farm/armbian-a733-gpu/files/mesa/a733-build-mesa --apercel ~/farm/apercel-src --prefix /opt/mesa-apercel` (copy the sources first, from the build PC: `rsync -a src/apercel/ orangepi@<ip>:~/farm/apercel-src/ && rsync -a src/armbian-a733-gpu orangepi@<ip>:~/farm/`), then `PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1 VK_ICD_FILENAMES=$(ls /opt/mesa-apercel/share/vulkan/icd.d/*.json) vulkaninfo --summary`. A prefix outside `/usr/local` keeps it away from the system.
+   - Unload before 4b: `sudo rmmod apercel`. All open drivers bind `img,gpu`.
+4b. **Route L, comparison (README 16.6).** Orange Pi's own, older driver copy:
    - Read the power-domain state: `sudo devmem 0x07065008` (PD 5, GPU_TOP) and `sudo devmem 0x07066008` (PD 6, GPU_CORE). `0x8` means on. `devmem` may need `sudo apt install busybox` or `devmem2`.
    - Install the firmware: `sudo install -D -m 0644 ~/farm/fw/1.0/rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`. This is the libgpu file, fw 1.0, sha256 `3974e79f…`.
    - Install the modules, once per board: `sudo mkdir -p /lib/modules/6.6.98-sun60iw2-redroid/extra && sudo cp ~/farm/route-l/*.ko /lib/modules/6.6.98-sun60iw2-redroid/extra/ && sudo depmod -a`. Check `uname -r` first, and `cd ~/farm/route-l && sha256sum -c SHA256SUMS` after the copy.
@@ -60,7 +70,7 @@ Only the board can decide:
    - Expect `loaded firmware powervr/rogue_36.56.104.183_v1.fw` and `FW version v1.0 (build 6852738 OS)`, plus a `renderD128` node.
    - Save the result: `dmesg > ~/farm/route-l-fw1.0.dmesg`.
    - If you skip 4c, unload now: `sudo rmmod powervr`. Both drivers bind `img,gpu`, so step 5 needs it gone.
-4c. **Optional: Imagination fw 1.1 (README 16.8).** Do this only after 4b, whether 4b passed or failed: the result tells us whether the K3's firmware runs on the A733. The vendor driver accepts any major-1 file (`FW_MAX_SUPPORTED_MAJOR_VERSION 1`, `pvr_fw.c:26`, minor not checked), so the header passes. What we learn is whether the firmware boots with this driver.
+4c. **Optional: Imagination fw 1.1 (README 16.8).** Do this only after 4b, whether 4b passed or failed. Step 4a already runs fw 1.1 with apercel; this tells us whether Orange Pi's older driver copy runs it too. The vendor driver accepts any major-1 file (`FW_MAX_SUPPORTED_MAJOR_VERSION 1`, `pvr_fw.c:26`, minor not checked), so the header passes. What we learn is whether the firmware boots with this driver.
    - Swap the file: `sudo rmmod powervr`, then `sudo install -D -m 0644 ~/farm/fw/1.1/rogue_36.56.104.183_v1.fw /lib/firmware/powervr/rogue_36.56.104.183_v1.fw`, then `sudo dmesg -C && sudo modprobe powervr`.
    - Expect `FW version v1.1 (build 6976702 OS)` and a `renderD128` node. Save `dmesg > ~/farm/route-l-fw1.1.dmesg`.
    - If the board hangs on 1.1, power-cycle. Nothing persistent changed apart from the firmware file.
@@ -96,6 +106,9 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 | `FW built for incorrect GPU ID` | Firmware for another BVNC. Route L needs 36.56.104.183. |
 | `Unsupported FW version 1.1 ...` (step 4c) | The driver refuses the 1.1 header. Not expected with the Orange Pi driver (it checks only major ≤ 1). Keep the line, go back to fw 1.0. |
 | fw 1.1 loads, then firmware timeout or GPU errors (step 4c) | The 1.1 firmware interface doesn't match this 6.6 driver. Keep `~/farm/route-l-fw1.1.dmesg` and go back to fw 1.0. Route M would then need a newer driver (apercel or mainline). |
+| apercel: `vulkaninfo` finds no device although the module is loaded | Mesa looks for the DRM driver name `apercel`. The Mesa build lacks apercel's patch; check `strings libvulkan_powervr_mesa.so | grep -x apercel`. |
+| apercel: `Unknown symbol drm_sched_*` (or `drm_exec_*`, `drm_gem_shmem_*`) | The three helper modules from `out/apercel/` are missing or not loaded first. Load them in the order of step 4a. |
+| apercel: firmware `deferring` or `not found` | apercel reads `/lib/firmware/apercel/`, not `/lib/firmware/powervr/`. |
 | `Unknown GPU! Set 'exp_hw_support' to bypass this check.` | Only with a mainline-based driver (apercel, or a mainline build), never with Route L's Orange Pi driver. 36.56.104.183 is not in mainline's support list yet. Reload with `exp_hw_support=1` (for example `sudo modprobe powervr exp_hw_support=1`); the driver then warns `Running on unknown hardware; expect issues.` |
 | Board hangs when the GPU starts (Route A) | Likely an SError from a blocked secure-register write. Run Route L first and keep the serial log. |
 | PD 5 or PD 6 reads `0x0` after probe | The power domain is off, so the GPU is unpowered. Check the PCK-600 probe in `dmesg`. |
@@ -112,7 +125,8 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - the serial log of the first boot after step 4, and of the first boot after step 5 if there were problems;
 - the output of `uname -r` and `sudo dmesg | tail -100` if anything failed.
 - For Route L: `dmesg | grep -i -E 'powervr|rogue|FW version|deferring|loaded firmware'`, `cat /sys/kernel/debug/dri/*/name`, and the PD 5 and PD 6 `devmem` readbacks.
-- For each firmware tried: `~/farm/route-l-fw1.0.dmesg` and, if step 4c ran, `~/farm/route-l-fw1.1.dmesg`, plus one line saying which file is installed at the end.
+- For each driver and firmware tried: `~/farm/apercel-fw1.1.dmesg`, `~/farm/route-l-fw1.0.dmesg` and, if step 4c ran, `~/farm/route-l-fw1.1.dmesg`, plus one line saying which file is installed at the end.
+- The PD 5 and PD 6 readbacks before and after each load (they decide whether an upstream A733 GPU node needs one power domain or two, README 16.10).
 - On a PC with internet, run `python3 -I scripts/60-mainline-watch.py` (README 16.9) and note anything marked `*` or `NEW`. Upstream may have moved since 2026-10-29.
 
 ## 7. Not in scope for this session
@@ -125,5 +139,6 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - **Radxa A733 Bullseye KDE image** (`radxa-a733_bullseye_kde_r2.output_512.img.xz`, sha256 `1b5604fe…`, kernel 5.15.147-14-a733). It ships a prebuilt Linux GPU stack: the DKMS package `img-bxm-dkms` 0.1.0-2, a built `pvrsrvkm.ko.xz` for its kernel (DDK 24.2@6603887, Linux WS build), the IMG user-space libraries (24.2.6603887), and firmware 36.56.104.183. Its `rgx.sh` is byte-identical to the kit's; its `rgx.fw` is not (`43eb5d05…` against the kit's Android copy `11e08779…`). Its EGL is Mesa's. Its sunxi layer defines the DRM_CTRL register, but I found no write to it and no SMC secure-release call, so it doesn't settle the secure-reset question. Use it to compare the Linux driver and its start sequence. Do not use it as a base: the kernel is 5.15.
 - **Orange Pi Android 13 pack** (`OrangePiZero3W_A733_Android13_lcd_v1.0`): Android-flavour `pvrsrvkm`, DDK 24.2@6643903 strings, firmware 36.56.104.183, kernel 5.15.119, `buildvariant=userdebug`. Use it for the Android blobs and the device tree. Do not flash it to the farm.
 - **Allwinner libgpu** (`tina5.0_aiot/product/linux/external/libgpu`, commit `144487e8`): the open-source firmware `powervr/rogue_36.56.104.183_v1.fw` (fw 1.0) for Route L, and the DDK 6603887 userspace libraries (for the DDK kernel driver, not Route L). Mirror it with the rest.
+- **CheezeCS/armbian-a733-gpu** (`src/armbian-a733-gpu` @ `6960be50`, fetch group `apercel`): Armbian for the Zero 3W with apercel, fw 1.1 and Mesa 26.3. Its `docs/troubleshooting.md` lists every problem they hit on this board. Its `files/mesa/a733-build-mesa` builds Mesa with the apercel patch on the board or cross on amd64 Debian trixie.
 - **BayLibre SpacemiT K3 AOSP** (`src/baylibre-k3` @ `06c4578e`, `src/baylibre-common` @ `755c243b`, fetch group `fw`): Android 17 on the same GPU with upstream `drm/imagination` + Imagination fw 1.1 + Mesa (PowerVR Vulkan + Zink) + minigbm `gbm_mesa`. It is the template for Route M (README 16.8). It is build-green but not yet validated on hardware, and it is riscv64, so nothing in it runs here as is.
 - Mirror the Radxa apt repo (`radxa-repo.github.io/a733-bullseye`) and keep the Orange Pi pack, before the links disappear.

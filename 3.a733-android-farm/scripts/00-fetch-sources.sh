@@ -2,7 +2,7 @@
 # Recreate src/ at the exact commits this project was built and checked with.
 # Shallow + sparse: ~2.5 GB download (most of it is the kernel).
 #   ./scripts/00-fetch-sources.sh            all repos
-#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw)
+#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw apercel)
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$FARM/src"
@@ -70,5 +70,12 @@ if want fw || [ -z "$SEL" ]; then
   fi
   fetch baylibre-k3     $GH/BayLibre/android_device_spacemit_k3.git     06c4578ef02e5d19fc62ef824f2cc616a724c710
   fetch baylibre-common $GH/BayLibre/android_device_spacemit_common.git 755c243bb9f2b1dbdbe4fb7a67ba15051b50d90b
+fi
+if want apercel || [ -z "$SEL" ]; then
+  # Open host GPU driver proven on the Orange Pi Zero 3W (README 16.10), built by 22-build-apercel.sh:
+  #  - CheezeCS fork = TumRedSun/apercel e098b9f + 30 backported upstream drm/imagination fixes + Mesa 26.3 patch
+  #  - CheezeCS/armbian-a733-gpu: the Armbian integration (Kconfig prompts, Mesa build script, docs)
+  fetch apercel         $GH/CheezeCS/apercel.git          d03675d4a38e1aa8eb7c0e982e213893a8631baa
+  fetch armbian-a733-gpu $GH/CheezeCS/armbian-a733-gpu.git 6960be5081795368f697a8da772f76d71a5203ff
 fi
 du -sh "$FARM/src"

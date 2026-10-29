@@ -4,7 +4,8 @@
   python3 -I scripts/60-mainline-watch.py        # prints a table, saves out/mainline-watch/<date>.json
 
 Stdlib only. Sources: kernel.org cgit (torvalds, linux-next), U-Boot (GitHub mirror),
-linux-firmware (gitlab.com API), Mesa docs (docs.mesa3d.org), kernel.org patchwork.
+linux-firmware (gitlab.com API), Mesa docs (docs.mesa3d.org), kernel.org patchwork,
+GitHub API (apercel and the CheezeCS fork proven on the Zero 3W, README 16.10).
 lore.kernel.org and gitlab.freedesktop.org are behind a bot check, so they are not used.
 """
 import datetime
@@ -76,10 +77,25 @@ def check():
         r["Mesa docs 36.56.104.183"] = f"listed, table: '{best}'" if pos[best] >= 0 else "listed"
     i = text.find("conformant to Vulkan")
     r["Mesa docs conformance line"] = text[i:i + 150] if i >= 0 else "not found"
+    rel = get("https://docs.mesa3d.org/relnotes.html")
+    vers = re.findall(r"relnotes/(\d+\.\d+\.\d+)\.html", rel)
+    r["Mesa newest release (26.3+ = GLES 3.1 via zink)"] = vers[0] if vers else rel[:80]
+    for repo in ("TumRedSun/apercel", "CheezeCS/apercel", "CheezeCS/armbian-a733-gpu"):
+        js = get(f"https://api.github.com/repos/{repo}/commits?per_page=1")
+        try:
+            c = json.loads(js)[0]
+            r[f"{repo} head"] = f'{c["sha"][:12]} {c["commit"]["committer"]["date"][:10]}'
+        except Exception:
+            r[f"{repo} head"] = js[:80]
+    js = get("https://api.github.com/repos/TumRedSun/apercel/issues?state=all&per_page=10")
+    try:
+        r["apercel issues (newest 10)"] = [f'#{i["number"]} {i["state"]} {i["created_at"][:10]}: {i["title"][:70]}' for i in json.loads(js)]
+    except Exception:
+        r["apercel issues (newest 10)"] = js[:80]
     ub = get("https://api.github.com/repos/u-boot/u-boot/contents/arch/arm/mach-sunxi?ref=master")
     r["U-Boot mach-sunxi sun60i/DRAM"] = sorted(set(re.findall(r'"name":"([^"]*(?:sun60i|a733)[^"]*)"', ub))) or "none"
     pw = {}
-    for q in ("a733", "axp318", "sun60i", "k3-gpu", "36.56.104"):
+    for q in ("a733", "axp318", "sun60i", "k3-gpu", "36.56.104", "drm/imagination"):
         js = get(f"https://patchwork.kernel.org/api/1.3/patches/?q={q}&order=-date&per_page=6")
         try:
             pw[q] = [f'{p["date"][:10]} {p["state"]}: {p["name"][:90]}' for p in json.loads(js)]
