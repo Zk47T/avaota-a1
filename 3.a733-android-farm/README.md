@@ -92,6 +92,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 00-fetch-sources.sh              recreate src/ at pinned commits (groups: kernel gpu ref fw apercel; opi on request)
 │   ├── 10-build-host-kernel.sh          kernel + fragment
 │   ├── 15-package-kernel-deb.sh         -> linux-image/dtb/headers .deb
+│   ├── 16-build-emmc-dtb.sh             Zero 3W / Zero 4 device trees with the eMMC supplies on (section 8.4)
 │   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch; SECURE_CONFIG=0 = fallback without it)
 │   ├── 22-build-apercel.sh              open host GPU driver apercel + 3 DRM helper modules -> out/apercel/
 │   ├── 23-build-mesa-android.sh         Route M: Mesa 26.3 PowerVR + Zink for redroid 13 arm64 (VARIANT=apercel)
@@ -109,6 +110,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 40-board-setup.sh                RUN ON THE A733 BOARD
 │   ├── 45-usb-net.sh                    board, optional: USB GbE dongle or USB NCM gadget
 │   ├── 50-board-report.sh               board: PASS / WARN / FAIL report + evidence folder
+│   ├── 55-storage-report.sh             board: space per item, GB/day written to flash, eMMC wear (section 8.4)
 │   └── 60-mainline-watch.py             any PC: re-check mainline/next/firmware/Mesa/patchwork, diff vs last run
 ├── src/   (git-ignored; 00-fetch-sources.sh)
 └── out/   (git-ignored; contains vendor blobs, do not publish)
@@ -309,7 +311,7 @@ Why route B is worth it:
 - The Android system lives in the Docker image, which is shared and read-only (~2 GB once per board).
 - Per-instance `/data` holds TikTok (~0.5 GB installed) + Instagram (~0.4 GB) + caches. TikTok's video cache can grow to 1–2 GB, so **4 GB per instance is enough** if you trim caches now and then (`adb shell pm trim-caches 1G`).
 - `SHARED_DATA=1 ./40-board-setup.sh run` uses redroid's overlay `/data`: apps are installed once in `data-base`, and each instance keeps only its diff (account + cache, ~1–2 GB).
-- 16 GB eMMC budget: host ~2.5 GB + image ~2 GB + 2 × 4 GB data ≈ 12.5 GB. That fits; 32 GB gives room.
+- 16 GB eMMC budget: host ~2.5 GB + image ~2 GB + 2 × 4 GB data ≈ 12.5 GB. That fits; 32 GB gives room. **Measured sizes, the price per instance and flash wear are in section 8.4.**
 
 **Zero 4 (6 GB) vs Zero 3W (6 GB) for this farm:**
 - **Zero 4:** RJ45 GbE onboard, so one power cable + one Ethernet cable and no dongle or hub. Add a heatsink and a 30 mm fan on its fan header.
@@ -414,6 +416,7 @@ Density levers for our A733 boards, in order of gain:
   - **3 × A733 for 6 instances:** 3 × Zero 4 6 GB = 7.2 tr, so 1.2 tr per instance.
   - **RK3588 at its 3-instance limit:** 1.6–2.2 tr per instance (5 Pro 8 GB to 5 Plus 8 GB).
   - **Extras:** each board also needs a 5 V/3 A supply, a microSD card and a fan. The A733 farm needs three sets instead of one, and still stays cheaper per instance.
+  - **With eMMC** (user prices: 16 GB at 0.55 tr per A733 board, 32 GB at 1.1 tr per RK3588 board): 1.48 tr per instance against 1.93–2.57 tr. For six instances that is 8.85 tr against 11.6 tr (section 8.4).
 - **What the A733 also gives:**
   - A failure takes down only 2 instances.
   - The boards are identical, so the setup is the same everywhere.
@@ -446,6 +449,89 @@ Farm-relevant notes from other A733 projects (GitHub survey 2026-10-29):
 - Every vendor stack found (Radxa, Orange Pi, LineageOS work for the Cubie A7A) uses DDK 24.2. Mainline `powervr` with Imagination's open firmware runs on the A733 in two more kernels (DockSeed 6.18, nickyg666 6.18).
 
 All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.dtb` are all in our tree), images and scripts. **At local prices, the Zero 4 is the farm board:** same price as the Zero 3W, GbE onboard (no dongle, no USB failure point), and the same 2400 MHz DRAM. The 4 Pro costs 0.3 tr more for PoE, NVMe and USB-A, which the farm doesn't need, and its DRAM runs 25% slower unless the DDR study shows it can run faster. The Zero 3W stays the pilot, course and upstream board.
+
+### 8.4 Storage: a 16 GB eMMC per A733 board (prices and sizes 2026-10-29)
+
+**Local prices from the user:**
+- a 16 GB eMMC chip to solder onto a Zero 4 or Zero 3W: **0.55 tr**;
+- the 32 GB eMMC on each RK3588 board today: **1.1 tr**.
+
+| Setup, storage included (no supply or fan) | Per board | Instances | **Per instance** | Flash per instance |
+|---|---|---|---|---|
+| Zero 4 6 GB + 16 GB eMMC | 2.4 + 0.55 = 2.95 tr | 2 | **1.48 tr** | 8 GB |
+| Zero 3W 6 GB + 16 GB eMMC | 2.95 tr | 2 | 1.48 tr | 8 GB |
+| Orange Pi 5 Pro (quoted 4.7 tr) + 32 GB eMMC | 5.8 tr | 3 | 1.93 tr | 10.7 GB |
+| Orange Pi 5 Plus 8 GB + 32 GB eMMC | 7.7 tr | 3 | 2.57 tr | 10.7 GB |
+
+**Six instances:** 3 × Zero 4 = **8.85 tr**, against 2 × 5 Pro = 11.6 tr. The A733 farm is about 24 % cheaper, with storage included.
+
+**Does 16 GB fit? Yes, with about 3.5–4.5 GB to spare.** The sizes below were measured on 2026-10-29 unless marked as estimates:
+
+| Item | Size | Source |
+|---|---|---|
+| Usable space on a "16 GB" eMMC | about 15 GB after formatting | the user area is about 14.6 GiB (15.7 GB); set the ext4 reserve to 1 % with `tune2fs -m 1` |
+| Orange Pi Debian trixie 1.0.2 server, as shipped | **3.56 GB used** (869,951 × 4 KiB blocks) | image `…trixie_server_linux6.6.98`, sha256 `5473e154…` (the 7z) |
+| …what can go from it | about 0.4 GB of apt lists and cache (`apt-get clean`, lists), plus 0.3–0.4 GB of desktop and AI development libraries (VTK 146 MB, LLVM 17 116 MB, OpenCV dev 127 MB) | `dpkg` status: 855 packages, 2.60 GB |
+| Docker in that image | **already installed**: docker-ce, containerd, buildx (263 MB) | so step 3's `get.docker.com` is skipped |
+| redroid 13 arm64 image | **1.42 GB** uncompressed (640 MB download): `system/product` 332 MB, `framework` 199 MB, `apex` 192 MB, `lib64` 171 MB | layer `7ae0e911…`, streamed and summed |
+| Our layers on top | Route A 65 MB, video engine 9 MB (Route M 30 MB) | `out/redroid-*` |
+| Image tar from `docker load` | 0.67 GB, **delete it after loading** | |
+| Instagram, arm64 APK | 184 MB (405.1.0.57.77, Nov 2025) | APKMirror |
+| TikTok APK | no 2026 figure found; its Chinese twin Douyin is 360 MB (Jan 2026). Budget 0.35 GB. | estimate |
+| Per instance: Android's first-boot `/data` + both apps (APK, oat) + app data | 1.2–1.6 GB | estimate |
+| Per instance: caches, kept down by a daily `pm trim-caches` | 1–1.5 GB | estimate |
+
+**Total:** host 2.8–3.6 + kernel 0.1 + image 1.5 + 2 × (1.6 + 1.5) ≈ **10.6–11.4 GB** of about 15 GB usable. `SHARED_DATA=1` saves about 0.8 GB more, because the apps are stored once. Swap stays in zram, never on the eMMC.
+
+**Flash wear decides lifetime, not space. Measure it on day one.**
+- A video app that caches what it plays writes a lot: TikTok at 1–2 Mbit/s around the clock is 10–20 GB/day per instance, **if** all of it reaches flash.
+- Android's nightly background dexopt also rewrites oat files.
+- Consumer TLC eMMC is rated for roughly 1,000–3,000 P/E cycles. A pSLC or industrial part lasts about ten times longer, at much lower capacity.
+- Host writes the eMMC can take ≈ 16 GB × P/E ÷ write amplification (~2):
+
+| Writes per board per day | 1,000 P/E (8 TB) | 3,000 P/E (24 TB) |
+|---|---|---|
+| 5 GB | 4.4 years | 13 years |
+| 15 GB | 1.5 years | 4.4 years |
+| 30 GB | 0.7 years | 2.2 years |
+
+- **Per GB of flash the A733 board carries more instances** (2 per 16 GB, against 3 per 32 GB on an RK3588), so at the same write rate per instance its eMMC wears about 33 % faster.
+
+**Commands:**
+- `scripts/55-storage-report.sh` prints:
+  - space per item (`df`, `docker system df`, each instance's `/data`, app data and cache sizes);
+  - **GB/day written to the root device** since boot;
+  - the eMMC's own wear estimate (`mmc extcsd read`: `LIFE_TIME_EST_TYP_A/B`, `PRE_EOL_INFO`; `apt install mmc-utils`).
+- Run it after a day of normal use, then weekly.
+
+**Write reducers**, cheapest first:
+- Mount with `noatime`; run `fstrim` weekly (the controller supports discard).
+- Set journald `Storage=volatile`; cap Docker logs (`--log-opt max-size=10m`).
+- Run `pm trim-caches` daily.
+- If the report shows the app's video cache is the big writer, mount a small tmpfs over that one directory before the container starts. The bind mount carries host submounts into the container. This costs RAM, so only do it if the numbers ask for it.
+
+**Fitting the eMMC:**
+- Both boards have a BGA153 footprint, empty from the factory (manual: "default blank sticker").
+- The Zero 3W and Zero 4 trees enable the controller (`sdc2`, HS400, 8-bit) but leave both supplies commented out.
+- `scripts/16-build-emmc-dtb.sh` builds `out/emmc-dtb/sun60i-a733-orangepi-{zero3w,zero4}-emmc.dtb`:
+  - vmmc = `reg_dc1sw2` (3.3 V, net `VCC_3V3_EMMC`), vqmmc = `reg_cldo1` (net `VCC-1V8-EMMC`), checked by decompiling: those two properties are the only difference;
+  - the DT allows `cldo1` 0.5–3.5 V, so **meter VCCQ = 1.8 V before the first eMMC boot**.
+- Allwinner's production guides in `2.docs` (`Linux_eMMC物料_验证指南`, `eMMC硬件_排查指南`) give the eMMC check and debug steps.
+- There is no A733 eMMC support list. The A523 list (V1.139, 2023) names tested parts such as Samsung KLMAG1JETD/KLMAG2*, SanDisk SDINBDG4-16G and Micron MTFC16GAKAECN; prefer a listed part.
+- Orange Pi's manual covers writing the Linux image to eMMC (§3.34).
+
+**Without soldering: the Orange Pi 4 Pro.**
+- It has a socket for Orange Pi's eMMC modules (16–128 GB).
+- It also has an M.2 M-key slot that boots through SPI flash + NVMe (manual §3.36). Orange Pi tested Fanxiang and Guangcun SSDs, and its changelog fixes Kingston startup failures.
+- Per instance it costs (2.7 tr + the SSD) ÷ 2. With a 128 GB NVMe at, say, 0.5 tr, that is **1.6 tr**:
+  - about 0.12 tr more than a Zero 4 with a soldered 16 GB;
+  - still below every RK3588 option (1.93 tr).
+- In return:
+  - 8× the space and far more write endurance;
+  - no BGA work on every board;
+  - a dead SSD is swapped in a minute.
+- The price is its 1800 MHz DRAM (section 8.3) and a larger board.
+- **Check local prices for a 128 GB NVMe and the Orange Pi eMMC module before buying boards 2 and 3.**
 
 ## 9. On the A733 board
 

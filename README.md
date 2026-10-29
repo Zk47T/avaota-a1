@@ -1319,6 +1319,10 @@ The cost of an A733 board is running the vendor BSP for a while. Mainline work i
   - 4 Pro: schematic V1.3.2, user manual v1.4.
 - Both manuals list eMMC (8/16/32 GB) and UFS (32/64/128 GB) as **optional, not fitted by default**.
 - The Zero 4 V1.5 schematic shows a PWM-switched fan header (`FAN_EN_PWM`), the YT8531C PHY and the AXP318.
+- **eMMC on the farm boards (2026-10-29):**
+  - A 16 GB chip costs 0.55 tr locally, and 16 GB holds 2 instances with room to spare.
+  - `3.a733-android-farm/scripts/16-build-emmc-dtb.sh` builds eMMC device trees for both the Zero 3W and the Zero 4.
+  - Flash wear is the open question (farm README 8.4).
 - Orange Pi also publishes Android images: Android 13 for the Zero 3W and 4 Pro, **Android 16 for the Zero 4** (DDK 25.1, kernel 6.6.102). Farm README section 17 covers them.
 
 **The boards:**

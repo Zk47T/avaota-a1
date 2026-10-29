@@ -102,5 +102,8 @@ if want opi; then   # not in the default set: 3.3 GB of images
   IMG=$FARM/out/cache/opi-android
   drive "$IMG/OrangePiZero3W_A733_Android13_v1.0.tar.gz"  1pkdnQSufB3uY3vTj3uskWLsNV8w7cPD1 8081ff479cb1e621a09ada104cb0b865325b559dae76e0a2f5f46ceffe606c4d
   drive "$IMG/OrangePiZero4_A733_Android16_v1.0.tar.gz"   1utu_-tKOYXmWC0F5LHazwTJ2Jw8OWUAY f5a491e2faae8eff73dbac400662e4d30dacdef4255ed89b6bbeaa3b68b4b40c
+  # the board-day host OS (BOARD-DAY step 1; README 8.4 measured its size)
+  drive "$FARM/out/cache/opi-debian/Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z" \
+        1hPlHFaNq5PtgR3gq1yOcm7Xqo0Y2Cy7V 5473e154c199f75733662c6f7a05c8d518ba3f57d905037e8d34037c6109055f
 fi
 du -sh "$FARM/src"

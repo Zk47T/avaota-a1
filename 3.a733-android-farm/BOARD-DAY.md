@@ -81,6 +81,7 @@ Only the board can decide:
 4d. **Reboot before step 5** (`sudo reboot`). The open-driver tests leave the GPU in an unknown state, and nothing loads them at boot (4a). Never `rmmod` or reload `pvrsrvkm` on a live GPU: on the Zero 3W that hangs the board until a power cycle (README 16.12).
 5. **Start the stack.** `./40-board-setup.sh run`. It installs the GPU driver and firmware, loads the image, sets the CPU and memory layout, and starts two instances (`android1` on adb port 5555, `android2` on 5556).
 6. **Read the report.** `./50-board-report.sh`. Each line is PASS, WARN or FAIL. The evidence (dmesg, logcat, SurfaceFlinger dump, props) is saved under `~/farm/reports/<time>/`.
+   - Also run `./55-storage-report.sh` once the phones are up, and again the next day after normal use. It shows space per item and **GB/day written to flash**, which decides how long a 16 GB eMMC lasts (README 8.4).
 7. **Look from the laptop.** `adb connect <ip>:5555` and `adb connect <ip>:5556`, then `adb -s <ip>:5555 shell getprop ro.hardware.egl` and `adb exec-out screencap -p > s1.png`. Keep the serial console attached: with the vendor Linux DDK, a CPU screen grab while the GPU renders can deadlock the kernel (README 16.12). Take one screenshot on an idle screen first, then one while an app animates, and note if the board stops answering.
    - Route A's GPU clock: `dmesg | grep -i 'clk_rate'` should show `change default clk_rate to max opp freq:1008000000`.
 
@@ -178,12 +179,14 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - If step 8 ran: `~/farm/route-m-logcat.txt`, the SurfaceFlinger dump, and which image (base or apercel variant) booted.
 - If step 9 ran: the codec grep per app and the two `docker stats` outputs (hardware on and off).
 - If step 10 ran: `top`, `gfxinfo` and the codec grep from the native Android image.
+- Both `55-storage-report.sh` outputs (after setup and after a day): the GB/day figure and the per-app cache sizes.
 - Board temperature under load: `cat /sys/class/thermal/thermal_zone*/temp`. The CPU starts throttling at 70 °C (README 17.6).
 - On a PC with internet, run `python3 -I scripts/60-mainline-watch.py` (README 16.9) and note anything marked `*` or `NEW`. Upstream may have moved since 2026-10-29.
 
 ## 7. Not in scope for this session
 
 - eMMC: not needed for the SD boot. For eMMC day, the device tree is prepared: `out/zero3w-emmc/sun60i-a733-orangepi-zero3w-emmc.dtb`, with the change in `config/zero3w-emmc-supplies.patch`. VCC comes from DC-DC1 at 3.3 V (`reg_dc1sw2`, the SD card's rail). VCCQ comes from `reg_cldo1` at 1.8 V; confirm it with a meter on the eMMC VCCQ pad before the first boot. The stock Debian device tree already enables the eMMC controller (`sdmmc@4022000`), so an empty socket is probed on every boot with the stock tree too. The eMMC tree only adds the rails. Keep the stock tree for the SD-first boot, and install the eMMC tree once a chip is fitted and VCCQ is confirmed.
+  - For the Zero 4 (the farm board), `scripts/16-build-emmc-dtb.sh` builds the same change for both boards: `out/emmc-dtb/sun60i-a733-orangepi-{zero3w,zero4}-emmc.dtb`. Both boards use the same net names (`VCC_3V3_EMMC`, `VCC-1V8-EMMC`) and the same commented-out supplies. Meter VCCQ on the Zero 4 too.
 - JTAG: not needed now. The schematic routes the JTAG pins to the 40-pin header (PB route), but boot0 and pin muxing are not verified yet.
 
 ## 8. Reference images (not for the farm)
