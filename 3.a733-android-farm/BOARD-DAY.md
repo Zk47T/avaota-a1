@@ -1,7 +1,7 @@
 # A733 board day: the first session
 
 > Written for: the person bringing up the first Orange Pi Zero 3W (6 GB) with the redroid + PowerVR farm.
-> Prepared in software on 2026-10-28, updated 2026-10-29: apercel first (step 4a, already proven on another Zero 3W, README 16.10), Imagination fw 1.1 (step 4c), open stack (README 16.8). Nothing here has run on our hardware yet.
+> Prepared in software on 2026-10-28, updated 2026-10-29: apercel first (step 4a, already proven on another Zero 3W, README 16.10), Imagination fw 1.1 (step 4c), open stack (README 16.8). Nothing here has run on our hardware yet. Every build in step 3 was run on the build PC on 2026-10-29 (logs in `logs/2026-10-29-board-day-builds/`, hashes in `KIT-SHA256.txt`).
 
 ## 1. What is ready, and what the board must decide
 
@@ -12,7 +12,7 @@ Ready (built or checked without a board):
 - redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. **Never booted.**
 - Scripts: `40-board-setup.sh` (kernel, run), `45-usb-net.sh` (USB Ethernet), `50-board-report.sh` (PASS / WARN / FAIL report).
 - GPU routes, tested in this order (README section 16.6):
-  - **apercel** (host, open): CheezeCS's fork of apercel, upstream drm/imagination + 30 backported fixes, with Imagination fw 1.1. **Already works on another Orange Pi Zero 3W** with the same vendor kernel tree (README 16.10). Built by `scripts/22-build-apercel.sh` into `out/apercel/` (run it on the build PC first). This is now the first GPU test.
+  - **apercel** (host, open): CheezeCS's fork of apercel, upstream drm/imagination + 30 backported fixes, with Imagination fw 1.1. **Already works on another Orange Pi Zero 3W** with the same vendor kernel tree (README 16.10). Built by `scripts/22-build-apercel.sh` into `out/apercel/` on the build PC (2026-10-29, with the kit kernel's own compiler). This is now the first GPU test.
   - **Route L** (host): the Orange Pi 6.6 PowerVR driver, module `powervr.ko`, with Allwinner's open-source firmware `powervr/rogue_36.56.104.183_v1.fw`. This is the first GPU test. Built 2026-10-28 on the build PC (`out/route-l/`), with three helper modules (`gpu-sched`, `drm_shmem_helper`, `drm_exec`). Not run.
   - **Route A** (redroid): the kit's Android `pvrsrvkm` (DDK 24.2@6643903) with `rgx.fw` / `rgx.sh` 36.56.104.183.
   - **Route M** (later, not this session): the fully open stack, the same one BayLibre builds for the SpacemiT K3, which has the same GPU (README 16.8). Today only its firmware is tested (step 4c).
@@ -43,7 +43,7 @@ Only the board can decide:
 
 1. **Flash the OS.** Write the Orange Pi Debian trixie 1.0.2 server image (`Orangepizero3w_1.0.2_debian_trixie_server_linux6.6.98.7z`; Debian 13.6, kernel 6.6.98-sun60iw2) to the SD card. Check the extracted `.img` against the shipped `.sha`. Power on with the serial adapter attached and log in as the default `orangepi` user.
 2. **Back up the stock kernel.** Run `sudo tar -C / -cpf ~/stock-kernel-backup.tar boot usr/lib/modules/6.6.98-sun60iw2`, and copy the tar off the card if you can. The image's apt lists have no Orange Pi kernel index, so this tar is the only rollback.
-3. **Copy the kit** (from the build PC, or from the laptop copy). First stage the two firmware files in separate folders, because they have the same name. Both come from `./scripts/00-fetch-sources.sh ref fw`. Replace `<ip>` with the board's address:
+3. **Copy the kit** (from the build PC, or from the laptop copy). First stage the two firmware files in separate folders, because they have the same name. Both come from `./scripts/00-fetch-sources.sh ref fw`. On the build PC everything above the `rsync` line is already done (2026-10-29), so only the `rsync` is left; on another PC, run it all. Replace `<ip>` with the board's address:
    ```bash
    mkdir -p out/fw/1.0 out/fw/1.1
    cp src/libgpu/gpu-firmware/powervr/rogue_36.56.104.183_v1.fw out/fw/1.0/
@@ -53,7 +53,7 @@ Only the board can decide:
    SECURE_CONFIG=0 ./scripts/20-build-pvrsrvkm-android.sh                   # -> out/deploy/lib/modules/pvrsrvkm-android-nosecure.ko (Route A fallback)
    ./scripts/23-build-mesa-android.sh && ./scripts/32-make-redroid-mesa-context.sh            # -> out/redroid-mesa/ (Route M, step 8)
    VARIANT=perf ./scripts/23-build-mesa-android.sh && VARIANT=perf ./scripts/32-make-redroid-mesa-context.sh   # optional: apercel too
-   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-mesa out/redroid-mesa-perf out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh orangepi@<ip>:~/farm/
+   rsync -a out/deploy out/route-l out/apercel out/fw out/redroid-mesa out/redroid-mesa-perf out/redroid-pvr-c2 out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/45-usb-net.sh scripts/50-board-report.sh scripts/55-storage-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
 4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run:
@@ -101,7 +101,7 @@ Only the board can decide:
    - Undo afterwards: `sudo docker rm -f android-m; sudo rm /etc/modprobe.d/farm-route-m.conf; sudo mv ~/farm/pvrsrvkm.conf /etc/modules-load.d/ && sudo reboot`.
 
 9. **Optional, once Route A runs: the video engine in the containers** (README 17.4).
-   - **Build PC:** `./scripts/33-make-redroid-codec2-context.sh`, then copy `out/redroid-pvr-c2` to `~/farm/` like the other contexts.
+   - **Build PC:** done on 2026-10-29 (`./scripts/33-make-redroid-codec2-context.sh`, link check 18 entry points, 0 problems). Step 3's `rsync` copies `out/redroid-pvr-c2` to `~/farm/`.
    - **Board:** `sudo docker rm -f android1 android2 && CODEC2=1 ./40-board-setup.sh run`. This loads `sunxi-ve` and `deinterlace` and builds `redroid-pvr-c2:13`.
    - **Checks:**
      - Host: `ls -l /dev/cedar_dev /dev/cedar_dev_ve2`.
@@ -186,7 +186,7 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 ## 7. Not in scope for this session
 
 - eMMC: not needed for the SD boot. For eMMC day, the device tree is prepared: `out/zero3w-emmc/sun60i-a733-orangepi-zero3w-emmc.dtb`, with the change in `config/zero3w-emmc-supplies.patch`. VCC comes from DC-DC1 at 3.3 V (`reg_dc1sw2`, the SD card's rail). VCCQ comes from `reg_cldo1` at 1.8 V; confirm it with a meter on the eMMC VCCQ pad before the first boot. The stock Debian device tree already enables the eMMC controller (`sdmmc@4022000`), so an empty socket is probed on every boot with the stock tree too. The eMMC tree only adds the rails. Keep the stock tree for the SD-first boot, and install the eMMC tree once a chip is fitted and VCCQ is confirmed.
-  - For the Zero 4 (the farm board), `scripts/16-build-emmc-dtb.sh` builds the same change for both boards: `out/emmc-dtb/sun60i-a733-orangepi-{zero3w,zero4}-emmc.dtb`. Both boards use the same net names (`VCC_3V3_EMMC`, `VCC-1V8-EMMC`) and the same commented-out supplies. Meter VCCQ on the Zero 4 too.
+  - For the Zero 4 (the farm board), `scripts/16-build-emmc-dtb.sh` builds the same change for both boards: `out/emmc-dtb/sun60i-a733-orangepi-{zero3w,zero4}-emmc.dtb`. Both boards use the same net names (`VCC_3V3_EMMC`, `VCC-1V8-EMMC`) and the same commented-out supplies. Meter VCCQ on the Zero 4 too. The script compiles with `-@`, so both trees keep `__symbols__` for U-Boot overlays, like the stock tree; its Zero 3W tree is byte-identical to `out/zero3w-emmc/` (checked 2026-10-29).
 - JTAG: not needed now. The schematic routes the JTAG pins to the 40-pin header (PB route), but boot0 and pin muxing are not verified yet.
 
 ## 8. Reference images (not for the farm)

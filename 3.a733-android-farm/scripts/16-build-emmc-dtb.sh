@@ -13,9 +13,9 @@ OUT=$FARM/out/emmc-dtb
 mkdir -p "$OUT"
 [ -x "$KSRC/scripts/dtc/dtc" ] || make -C "$KSRC" ARCH=arm64 scripts_dtc >/dev/null
 
-build() {   # build SRC.dts DST.dtb
+build() {   # build SRC.dts DST.dtb; -@ keeps __symbols__ for U-Boot overlays, as the kernel's dtbs build does
   cpp -nostdinc -I "$DTS" -I "$KSRC/scripts/dtc/include-prefixes" -I "$KSRC/bsp/include" -undef -D__DTS__ \
-      -x assembler-with-cpp "$1" | "$KSRC/scripts/dtc/dtc" -q -I dts -O dtb -o "$2" -
+      -x assembler-with-cpp "$1" | "$KSRC/scripts/dtc/dtc" -q -@ -I dts -O dtb -o "$2" -
 }
 for b in ${*:-zero3w zero4}; do
   src=$DTS/sun60i-a733-orangepi-$b.dts
