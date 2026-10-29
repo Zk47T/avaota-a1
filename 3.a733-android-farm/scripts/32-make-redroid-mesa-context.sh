@@ -65,11 +65,12 @@ SH
 chmod 755 "$C/vendor/bin/gpu_config.sh"
 install -m755 "$FARM/config/redroid-13-gpu_config.orig.sh" "$C/vendor/bin/gpu_config.orig.sh"
 
-# redroid assumes GLES 3.2; Zink on PowerVR gives at most 3.1 (Mesa 26.3), so
-# advertise 3.0 like BayLibre's K3 build. ro.* is first-set-wins, so patch the rc.
-sed 's/setprop ro.opengles.version 196610/setprop ro.opengles.version 196608/' \
+# redroid assumes GLES 3.2; Zink on this PowerVR reaches 3.1 (Mesa 26.3, both
+# variants; 24-mesa-shim-probe.sh), so advertise 3.1. ro.* is first-set-wins,
+# so patch the rc.
+sed 's/setprop ro.opengles.version 196610/setprop ro.opengles.version 196609/' \
   "$ROOT/vendor/etc/init/redroid.common.rc" > "$C/vendor/etc/init/redroid.common.rc"
-grep -q 'ro.opengles.version 196608' "$C/vendor/etc/init/redroid.common.rc"
+grep -q 'ro.opengles.version 196609' "$C/vendor/etc/init/redroid.common.rc"
 
 cat > "$C/Dockerfile" <<'DF'
 # Only COPY, no RUN: build on the board (native arm64 docker):

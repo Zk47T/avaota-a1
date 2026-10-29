@@ -93,6 +93,8 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 20-build-pvrsrvkm-android.sh     Android-flavour GPU driver (+ patch; SECURE_CONFIG=0 = fallback without it)
 │   ├── 22-build-apercel.sh              open host GPU driver apercel + 3 DRM helper modules -> out/apercel/
 │   ├── 23-build-mesa-android.sh         Route M: Mesa 26.3 PowerVR + Zink for redroid 13 arm64 (VARIANT=apercel)
+│   ├── 24-mesa-shim-probe.sh            Route M without a board: Vulkan features + Zink GL level via drm-shim
+│   ├── mesa_glver.c                     (used by 24)
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
 │   ├── redroid_link_check.py            (used by 26)
@@ -764,7 +766,40 @@ Steps 1–3 of the Route M work list (section 16.11) are done on this PC. Steps 
 - `vendor/lib64/gbm/dri_gbm.so`
 - `vendor/lib64/hw/vulkan.mesa.so`
 - `vendor/bin/gpu_config.sh`: a `powervr`/`apercel` case that sets `ro.hardware.egl=mesa`, `ro.hardware.gralloc=gbm`, `ro.hardware.vulkan=mesa`, `gralloc.gbm.device=/dev/dri/renderD<n>` and `vendor.mesa.loader.driver.override=zink`. Otherwise it falls back to redroid's script, kept as `gpu_config.orig.sh`.
-- `vendor/etc/init/redroid.common.rc` with `ro.opengles.version` lowered from 3.2 to 3.0 (Zink gives at most 3.1).
+- `vendor/etc/init/redroid.common.rc` with `ro.opengles.version` lowered from 3.2 to 3.1, the level Zink reaches here (section 16.14).
 - The Dockerfile is COPY-only. Build it on the board with `docker build -t redroid-mesa:13 out/redroid-mesa`. Mesa 26 reads `vendor.mesa.*` properties with keys up to 128 characters, so the property route works for Mesa options.
 
-**Not known until the board runs it:** whether the PowerVR Android WSI works inside redroid with gbm_gralloc buffers (BayLibre ran it with minigbm `gbm_mesa`); Zink's GLES level with each variant; SurfaceFlinger on Zink GLES (Android 13 RenderEngine has no Vulkan path); and performance. BOARD-DAY step 8 is the first try.
+**Not known until the board runs it:** whether the PowerVR Android WSI works inside redroid with gbm_gralloc buffers (BayLibre ran it with minigbm `gbm_mesa`); SurfaceFlinger on Zink GLES (Android 13 RenderEngine has no Vulkan path); and performance. BOARD-DAY step 8 is the first try.
+
+### 16.14 Route M checked without a board: the PowerVR drm-shim (2026-10-29)
+
+Mesa ships a no-op DRM shim for PowerVR (`src/imagination/drm-shim`). Preloaded, it fakes a `powervr` render node, and `PVR_SHIM_DEVICE_BVNC=36.56.104.183` makes it report our GPU. `scripts/24-mesa-shim-probe.sh` builds our exact Mesa tree for x86 with the shim, Zink and surfaceless EGL. It then runs `vulkaninfo` and `scripts/mesa_glver.c`, which tries GLES and desktop GL contexts from the top version down. The feature, limit and version queries are the real driver code; nothing executes on a GPU.
+
+How it was made to work: the shim hooks `stat()`/`readdir()`, but conda's libdrm calls `__xstat` (built against old glibc headers), which the shim doesn't hook on glibc ≥ 2.33. So the script builds libdrm 2.4.129 with the system compiler (`out/toolchains/libdrm-sys`). The variant is built with `-Db_ndebug=true`, see the assertion below.
+
+| | base | apercel variant |
+|---|---|---|
+| Vulkan device | `PowerVR B-Series BXM-4-64 MC1`, **Vulkan 1.2**, `Mesa 26.3.0-rc2 (git-e5f982d0e2)` | **Vulkan 1.3** |
+| GLES through Zink | **OpenGL ES 3.1** (GLSL ES 3.10); 3.2 refused | the same: **ES 3.1** |
+| Desktop GL through Zink | **3.2 core** (GLSL 1.50); 3.3 refused | the same: **3.2 core** |
+| Features the variant adds | — | depthClamp, vertexPipelineStoresAndAtomics, bufferDeviceAddress, 8/16-bit storage and push constants, shaderInt8, robustImageAccess, shaderZeroInitializeWorkgroupMemory, pipelineCreationCacheControl |
+| Missing in both | geometryShader, tessellationShader, dualSrcBlend, fillModeNonSolid, textureCompressionBC, pipelineStatisticsQuery | |
+
+So **the base build already reaches GLES 3.1**, the same as CheezeCS measured with apercel's patch on real hardware. The variant adds only Vulkan 1.3 features. The overlay now advertises `ro.opengles.version` = 3.1.
+
+**The variant trips a Mesa assertion.** Built with asserts on, every Vulkan start in the apercel variant aborts in `vk_device.c` `get_timeline_mode()` ("We can only have one timeline mode").
+- apercel's winsys adds an emulated timeline sync type next to the DRM syncobj type. That type is already timeline-capable whenever the kernel has `DRIVER_SYNCOBJ_TIMELINE`, which both the apercel and the Orange Pi kernel drivers set (`pvr_drv.c`), and the shim reports it too.
+- Release builds skip the assert and pick the emulated timeline. That probably works, but it is a configuration upstream Mesa forbids.
+- **Prefer the base variant for Route M.** Use the apercel variant only to compare.
+
+**Other Android-relevant facts** (base build):
+- **GLES 3.1 extensions (134):**
+  - Present: `GL_OES_EGL_image`, `GL_OES_EGL_image_external` and `_essl3` (video and camera textures), `GL_EXT_texture_format_BGRA8888`, `GL_KHR_texture_compression_astc_ldr`, `GL_OES_compressed_ETC1_RGB8_texture`, `GL_EXT_color_buffer_float` and `_half_float`, `GL_EXT_texture_filter_anisotropic`, `GL_EXT_buffer_storage`, `GL_KHR_debug`.
+  - Missing: `GL_EXT_YUV_target`, `GL_OES_texture_float_linear`, and the geometry, tessellation and AEP extensions.
+- **Vulkan:** `samplerYcbcrConversion` is true. The PowerVR driver offers only `DRM_FORMAT_MOD_LINEAR`, so every buffer shared through gralloc is linear.
+- **gralloc fit:**
+  - Mesa's `u_gralloc` tries CROS, then IMapper4 (redroid has no mapper 4 service), then the libdrm backend. That backend accepts gralloc modules named `GBM Memory Allocator`, which is the name in redroid's `gralloc.gbm.so`. It reads libdrm's `gralloc_handle_t`, the one `remote-android/gbm_gralloc` (`a8874a18ad78`) uses, including the `modifier` field.
+  - gbm_gralloc allocates with `gbm_bo_create()` on our `libgbm.so.1`: `dri_gbm` → Zink → PowerVR. CPU-access buffers get `GBM_BO_USE_LINEAR`.
+- **redroid 16 has the same GPU stack.** `redroid/redroid:16.0.0_64only-250627` (API 36, cached in `out/cache/`) ships the same Mesa 24.0.8 prebuilts, gbm_gralloc via allocator 2.0 / mapper 2.1, the same fake composer, and an rc that forces `debug.renderengine.backend gles`. So moving Route M to redroid 16 changes only the Android base. Rebuild with `-Dplatform-sdk-version=36`; the rc could then switch RenderEngine to `skiavk`.
+
+Results are saved in `out/mesa-shim-results/` (`vulkaninfo-*.txt`, `glver-*.txt`, `gles31-extensions-*.txt`).
