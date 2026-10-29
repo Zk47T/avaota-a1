@@ -6,6 +6,8 @@
 # Stage 2 (gpu+run): ./40-board-setup.sh run
 #   CODEC2=1 ./40-board-setup.sh run   also gives the containers the video engine
 #                                      (Allwinner Codec2 HAL, script 33, README 17)
+#   IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run
+#                                      other Android versions per instance (README 18)
 set -euo pipefail
 D=${FARM_DIR:-$HOME/farm}
 REL=6.6.98-sun60iw2-redroid
@@ -52,6 +54,17 @@ run)
     IMAGE=redroid-pvr-c2:13
     sudo docker image inspect $IMAGE >/dev/null 2>&1 || (cd "$D/redroid-pvr-c2" && sudo docker build -t $IMAGE .)
   fi
+  # Other Android versions (README 18): IMAGE1 / IMAGE2 choose the image per instance, e.g.
+  #   IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run
+  # redroid-pvr:* (Route A) share the pvrsrvkm loaded above; redroid-mesa:* need the open
+  # driver instead (BOARD-DAY step 8). Each version comes from redroid-a733-<v>-arm64.tar.zst.
+  for img in ${IMAGE1:-} ${IMAGE2:-}; do
+    v=${img##*:}
+    case "$v" in 12|17) ;; *) continue ;; esac
+    sudo docker image inspect "$img" >/dev/null 2>&1 && continue
+    command -v zstd >/dev/null || sudo apt-get install -y zstd
+    zstd -dc "$D/redroid-a733-$v-arm64.tar.zst" | sudo docker load
+  done
 
   echo "== 4. CPU layout: host on cpu0 (A55), Android on cpu1-7"
   # A55 = cpu0-5 (capacity 430/MHz), A76 = cpu6-7 (1024/MHz). cgroup v2 slices:
@@ -79,18 +92,20 @@ run)
   echo "== 6. two instances: each 1 dedicated A76 + 2 dedicated A55 + 1 shared A55"
   # SHARED_DATA=1: apps installed once in $D/data-base, each instance keeps only its diff
   for i in 1 2; do
-    if [ $i = 1 ]; then CPUS=1,2,5,6; else CPUS=3,4,5,7; fi
-    if [ "${SHARED_DATA:-0}" = 1 ]; then
+    if [ $i = 1 ]; then CPUS=1,2,5,6; IMG=${IMAGE1:-$IMAGE}; else CPUS=3,4,5,7; IMG=${IMAGE2:-$IMAGE}; fi
+    # A /data written by one Android version must not be reused by another: other images get their own
+    DATA=$D/data$i; [ "$IMG" = "$IMAGE" ] || DATA=$D/data$i-${IMG##*:}
+    if [ "${SHARED_DATA:-0}" = 1 ]; then   # one image only: the apps are shared between instances
       VOL=(-v "$D/data-base":/data-base -v "$D/data-diff$i":/data-diff); EXTRA=androidboot.use_redroid_overlayfs=1
     else
-      VOL=(-v "$D/data$i":/data); EXTRA=
+      VOL=(-v "$DATA":/data); EXTRA=
     fi
     sudo docker rm -f android$i 2>/dev/null || true
     sudo docker run -itd --privileged --name android$i \
       --cgroup-parent=android.slice --cpuset-cpus=$CPUS \
       --memory=$LIMIT --memory-swap=$(( ${LIMIT%m} + 1024 ))m \
       "${VOL[@]}" -p $((5554+i)):5555 \
-      $IMAGE \
+      "$IMG" \
       androidboot.redroid_gpu_mode=host \
       androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 \
       androidboot.redroid_fps=30 androidboot.use_memfd=1 $EXTRA

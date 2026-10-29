@@ -33,7 +33,10 @@ sudo cat /sys/kernel/debug/pvr/status > "$R/pvr-status.txt" 2>/dev/null && pass 
 
 say "3. docker and the image"
 command -v docker >/dev/null && pass "docker installed" || fail "docker not installed"
-sudo docker image inspect redroid-pvr:13 >/dev/null 2>&1 && pass "image redroid-pvr:13 present" || fail "image redroid-pvr:13 missing (docker load the tar)"
+for i in 1 2; do   # the image each instance runs (redroid-pvr:13 by default; 12/17 via IMAGE1/IMAGE2)
+  img=$(sudo docker inspect -f '{{.Config.Image}}' "android$i" 2>/dev/null)
+  [ -n "$img" ] && pass "android$i image: $img" || fail "android$i: no container (run 40-board-setup.sh run)"
+done
 sudo docker ps -a > "$R/docker-ps.txt" 2>/dev/null
 
 say "4. the two instances (README section 9)"
@@ -46,7 +49,8 @@ for i in 1 2; do
   adb connect "127.0.0.1:$port" >/dev/null 2>&1
   A="adb -s 127.0.0.1:$port"
   boot=$($A shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-  [ "$boot" = 1 ] && pass "android$i sys.boot_completed=1" || fail "android$i not booted (sys.boot_completed='${boot:-none}')"
+  rel=$($A shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')
+  [ "$boot" = 1 ] && pass "android$i sys.boot_completed=1 (Android ${rel:-?})" || fail "android$i not booted (sys.boot_completed='${boot:-none}')"
   egl=$($A shell getprop ro.hardware.egl 2>/dev/null | tr -d '\r')
   [ "$egl" = POWERVR_ROGUE ] && pass "android$i GPU selected (ro.hardware.egl=POWERVR_ROGUE)" \
     || warn "android$i ro.hardware.egl='${egl:-none}': PowerVR not selected, software rendering"

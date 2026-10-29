@@ -101,7 +101,8 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 │   ├── 25-check-km-um-match.sh          static connect-handshake check
 │   ├── 26-check-blobs-vs-redroid.sh     static link check vs the real redroid image
 │   ├── 27-build-host-mesa.sh            host Mesa for the board (trixie arm64): /opt/mesa-farm, or VARIANT=cheezecs (section 16.18)
-│   ├── redroid_link_check.py            (used by 26)
+│   ├── redroid_link_check.py            (used by 26, 30, 32, 33) linker-namespace check; VNDK or LLNDK-only images
+│   ├── redroid_base.sh                  (used by 30, 32) base image, rootfs copy and API per Android version 12/13/17 (section 18)
 │   ├── 30-make-redroid-pvr-context.sh   overlay image context (stock redroid + blobs)
 │   ├── 31-make-aosp-vendor-tree.sh      vendor/powervr-a733 for SOURCE-built redroid
 │   ├── 32-make-redroid-mesa-context.sh  Route M overlay image context + link check vs redroid 13
@@ -118,6 +119,7 @@ Imagination's DDK has a mode for Android running in a container on ChromeOS (ARC
 └── out/   (git-ignored; contains vendor blobs, do not publish)
     ├── fw/1.0, fw/1.1                   the two GPU firmware files, staged for the board (BOARD-DAY step 3)
     ├── host-mesa/                       27-build-host-mesa.sh: mesa-farm-arm64.tar.gz, a733-mesa_*.deb, SHA256SUMS.*
+    ├── redroid-a733-{12,17}-arm64.tar.zst  redroid 12 / 17 images, redroid-pvr + redroid-mesa each (section 18)
     └── mainline-watch/<date>.json       60-mainline-watch.py snapshots (per PC; baseline values in 16.9)
 ```
 
@@ -1342,3 +1344,72 @@ So the gain per instance ranges from large (H.264/HEVC feeds, scrcpy) to nothing
 - **Video:** the Decoder (37 pages), Encoder (45 pages) and CedarX (42 pages) guides cover the libcedarc API and the `/dev/cedar_dev` checks. The A733 is listed with VE0 + VE1.
 - **Docker guide:** generic (`docker.io` on Debian, `check-config.sh`). It adds nothing beyond section 5.
 - **Missing from all of them:** the VE register map. As with the GPU (16.17), the user manual documents only the SoC glue.
+
+## 18. redroid 12 and redroid 17 on the A733 (prepared 2026-10-29)
+
+**Short answer: both look possible, on either GPU route.** Every combination passes the static link checks below, and the images are built. Nothing has run on a board yet.
+
+**The rule that shapes everything: one GPU kernel driver per board, shared by all containers.**
+- **Route A host** (`pvrsrvkm`, DDK 24.2@6643903): the images `redroid-pvr:12`, `redroid-pvr:13` and `redroid-pvr:17` use the same Android 13 blobs, so **any mix of versions can run side by side**.
+- **Route M host** (apercel or Orange Pi's `powervr.ko`): the images `redroid-mesa:12`, `:13` and `:17`, also in any mix.
+- **The two routes can't share a board at the same time.** A container on the other route's host falls back to software rendering.
+
+| | redroid 12 | redroid 13 (the main plan) | redroid 17 |
+|---|---|---|---|
+| Base image | official `redroid/redroid:12.0.0_64only-latest`, pinned to `sha256:a6c464bb…`; SDK 31 | official `13.0.0_64only-240527`; SDK 33 | our build `aic/redroid-rk3588:17.0.0-panthor-20261029` (Nredroid 17.0.0, guide in `5.redroid-self-build/4.rk3588-a17/`); SDK 37, `CP2A.260605.016` |
+| Library model | VNDK v31 | VNDK v33 | no VNDK: LLNDK plus vendor copies (`libc++`, `libutils`, `libhidlbase`, …) |
+| Base graphics | Mesa 24.0.8 prebuilts, gbm_gralloc (allocator 2.0, mapper 2.1), fake composer, GLES RenderEngine | same as 12 | Mesa 26.1.4 (panfrost, lavapipe), gbm_gralloc **and** minigbm gralloc 4.0, fake composer, GLES RenderEngine |
+| No `ashmem` needed (`use_memfd`) | yes | yes | yes |
+| **Route A** (Android 13 DDK blobs) | **9/9 OK**, blobs unchanged | 9/9 OK | **9/9 OK** after two changes (below) |
+| **Route M** (Mesa 26.3 PowerVR + Zink) | API 31 build, **6/6 OK** | API 33, 6/6 OK | API 35 build, **6/6 OK** |
+| Images on the build PC | `out/redroid-a733-12-arm64.tar.zst`, 633 MB (both routes) | `redroid-pvr-13-arm64.tar`, plus the `out/redroid-mesa` context | `out/redroid-a733-17-arm64.tar.zst`, 807 MB (both routes) |
+
+**What redroid 17 needed:**
+- **Route A:**
+  - Android 13's `libion.so` is added. `gralloc.powervr.so` links it, but allocates through `libdmabufheap`; `ion_open` is a leftover path, and our kernel has DMA-BUF heaps, not ION.
+  - minigbm's allocator 4.0 service is switched off, and the IMG HALs take over its two manifest entries. Otherwise two services would claim `IAllocator@4.0/default`, and `libui` always picks the highest gralloc version present.
+- **Route M:**
+  - Mesa is built for API 35. NDK r29 stops at 35, which is BayLibre's own target, and an API 35 build runs on Android 17.
+  - GBM is installed as `libgbm_mesa.so` (the name A17's `gralloc.gbm.so` links), and A17's own `libdrm.so` is kept.
+  - minigbm's gralloc 4.0 is switched off, so the stack equals redroid 13's (gbm_gralloc via allocator 2.0). minigbm's generic backend cannot allocate on a render-only GPU.
+- **Android 17 still supports the old HALs.** Its `libui` keeps the Gralloc2/3/4 clients next to Gralloc5, and the image runs `hwservicemanager`, because its own composer and allocator are HIDL. So an Android 13-era HIDL gralloc 4.0 has a client.
+
+**Host kernel.** Our 6.6.98 kernel has everything the three versions need: binderfs, memfd, PSI, the BPF and netfilter parts of Android's network stack, sync files and DMA-BUF heaps. Missing, and not needed for the farm:
+- `ashmem`: all three use memfd;
+- `userfaultfd`: ART falls back to its older GC;
+- `tun`: only for VPN apps;
+- kernel BTF.
+
+**Runtime risks (static checks can't see these):**
+- **redroid 12, Route A:** an Android 13 vendor on an Android 12 system. Treble promises the opposite direction, and only the symbols were checked.
+- **redroid 17, Route A:**
+  - The Android 13 blobs run against A17's vendor copies of `libutils`, `libcutils` and friends. The names match; the C++ class layouts were not checked.
+  - The A17 base itself has never booted.
+- **Both routes:** the usual unknowns of sections 16.12 to 16.14 (SurfaceFlinger on the DDK or Zink, buffer sharing).
+
+**How they were checked.**
+- `redroid_link_check.py` now reads the image's own VNDK lists (`.31`, `.33`), or models a VNDK-less image (LLNDK only).
+- For packed APEXes (A17), it uses the image's bootstrap bionic.
+- Re-runs on redroid 13 give the same results as before.
+- Each new image was built on the build PC and contains every overlay file (25/25, 10/10, 27/27, 13/13).
+
+**On the board** (BOARD-DAY step 11):
+- **Route A:** `IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run`. It loads each version from its tar the first time, and gives each version its own data folder (`data1-12`, `data2-17`), because one Android version must never reuse another's `/data`.
+- **Route M:** BOARD-DAY step 8 with `redroid-mesa:12` or `redroid-mesa:17`.
+- **Order:** redroid 13 first (the planned path), then one instance on 12, then 17.
+
+**What does not exist:**
+- A DDK built *for* Android 12 or 17. Allwinner's public trees stop at 24.2 for Android 13 and Linux. The 25.1 stack in Orange Pi's Android 16 image has no public kernel driver (17.2).
+- Route A and Route M on one board at the same time.
+
+**Compared with the RK3588:**
+- redroid 12 there is proven with Rockchip's Mali blobs (`aic/redroid-rk3588:12.0.0-mali`).
+- redroid 17 there is the same open-stack image as here, on panthor.
+- On the A733, the vendor route reaches all three versions, because the PowerVR DDK blobs avoid the VNDK problem that blocks the RK3588's Android 12 Mali blobs on Android 17. That holds only if the static result survives the board.
+
+**Scripts:**
+- `23` takes `API=31|33|35`;
+- `30` and `32` take `REDROID=12|13|17`;
+- `redroid_base.sh` (new) maps a version to its base image, extracted root and API level;
+- `40` takes `IMAGE1` and `IMAGE2`;
+- `50` reports each instance's image and Android version.

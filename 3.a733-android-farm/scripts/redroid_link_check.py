@@ -2,12 +2,14 @@
 """Static check: will the PowerVR vendor blobs link inside a redroid image?
 
 Models Android's linker namespaces the way linkerconfig sets them up for
-Android 13 (API 33):
+Android 12/13 (API 31/33, VNDK lists from the image's VNDK APEX):
   sphal  - EGL/GLES/Vulkan drivers, mapper impl, gralloc module and their
            vendor deps, loaded INTO framework processes (SurfaceFlinger, apps).
            May use: /vendor/lib64{,/egl,/hw} + VNDK-SP + LLNDK.
   vendor - vendor executables (allocator service, pvrsrvctl).
            May use: /vendor/lib64{,/hw} + VNDK core + VNDK-SP + LLNDK.
+Images without a VNDK APEX (Android 15+, e.g. redroid 17) have no VNDK at all:
+both namespaces may use only /vendor and the LLNDK (system/etc/llndk.libraries.txt).
 For every blob it resolves DT_NEEDED inside the allowed set, then checks that
 every undefined global symbol (and its symbol version) is exported by the
 library's dependency closure.
@@ -25,18 +27,30 @@ ROOT, OVL = sys.argv[1], sys.argv[2]
 APEX_VNDK = os.path.join(ROOT, "system/apex/com.android.vndk.current")
 
 
-def read_list(name):
-    p = os.path.join(APEX_VNDK, "etc", name)
-    return {l.strip() for l in open(p) if l.strip()}
+def read_list(path):
+    return {l.strip() for l in open(path) if l.strip()}
 
 
-VNDK_SP = read_list("vndksp.libraries.33.txt")
-VNDK_CORE = read_list("vndkcore.libraries.33.txt")
-LLNDK = read_list("llndk.libraries.33.txt")
+# The VNDK APEX names its lists after the API level (31 for redroid 12, 33 for 13).
+vndk_etc = os.path.join(APEX_VNDK, "etc")
+sp_lists = sorted(f for f in (os.listdir(vndk_etc) if os.path.isdir(vndk_etc) else [])
+                  if f.startswith("vndksp.libraries.") and f.endswith(".txt"))
+if sp_lists:
+    API = sp_lists[-1][len("vndksp.libraries."):-len(".txt")]
+    VNDK_SP = read_list(os.path.join(vndk_etc, f"vndksp.libraries.{API}.txt"))
+    VNDK_CORE = read_list(os.path.join(vndk_etc, f"vndkcore.libraries.{API}.txt"))
+    LLNDK = read_list(os.path.join(vndk_etc, f"llndk.libraries.{API}.txt"))
+else:  # no VNDK (Android 15+): LLNDK only
+    API = "no-VNDK"
+    VNDK_SP, VNDK_CORE = set(), set()
+    LLNDK = read_list(os.path.join(ROOT, "system/etc/llndk.libraries.txt"))
+print(f"namespace model: {'VNDK lists ' + API if sp_lists else 'LLNDK only (no VNDK)'}")
 
-# Where each kind of library physically lives in the image
+# Where each kind of library physically lives in the image. Images with packed
+# .apex files (redroid 17) have dangling system/lib64/libc.so symlinks into /apex;
+# their bootstrap bionic copy is the same build, so it stands in for the runtime APEX.
 LLNDK_DIRS = [os.path.join(ROOT, d) for d in (
-    "system/apex/com.android.runtime/lib64/bionic", "system/lib64")]
+    "system/apex/com.android.runtime/lib64/bionic", "system/lib64", "system/lib64/bootstrap")]
 VNDK_DIR = os.path.join(APEX_VNDK, "lib64")
 VENDOR_DIRS = {
     "sphal": ["lib64", "lib64/egl", "lib64/hw"],
@@ -116,7 +130,7 @@ def locate(name, ns, vendor_root):
 
 SYSTEM_DIRS = [os.path.join(ROOT, d) for d in (
     "system/apex/com.android.runtime/lib64/bionic", "system/apex/com.android.runtime/lib64",
-    "system/lib64", "system/apex/com.android.vndk.current/lib64")]
+    "system/lib64", "system/apex/com.android.vndk.current/lib64", "system/lib64/bootstrap")]
 
 
 def locate_system(name):

@@ -10,6 +10,7 @@ Ready (built or checked without a board):
 - Kernel `6.6.98-sun60iw2-redroid`: binder, PSI, zram, docker options, USB Ethernet (`r8152` module). Packages in `out/deploy/debs/`.
 - GPU driver `pvrsrvkm` (Android flavour, DDK 24.2@6643903) and the matching firmware `rgx.fw` / `rgx.sh` (36.56.104.183). The driver and blobs match (script 25 PASS).
 - redroid 13 with the PowerVR overlay: `redroid-pvr-13-arm64.tar`, 668 MB, built on the stock `redroid/redroid:13.0.0_64only-240527` arm64 image. Its entrypoint is the stock one. **Never booted.**
+- redroid 12 and 17 (README 18): `out/redroid-a733-12-arm64.tar.zst` (633 MB) and `out/redroid-a733-17-arm64.tar.zst` (807 MB). Each holds `redroid-pvr:<v>` (Route A, the same blobs and driver as 13) and `redroid-mesa:<v>` (Route M). Static link checks pass; **never booted** (step 11).
 - Scripts: `40-board-setup.sh` (kernel, run), `41-gpu-open-tests.sh` (steps 4a–4c with evidence), `45-usb-net.sh` (USB Ethernet), `50-board-report.sh` (PASS / WARN / FAIL report).
 - Host GPU userspace for the open-driver tests, prebuilt for Debian trixie arm64 (README 16.18):
   - `out/host-mesa/mesa-farm-arm64.tar.gz`: our Route M Mesa tree; binds both `powervr` and `apercel`; unpacks to `/opt/mesa-farm`.
@@ -58,7 +59,7 @@ Only the board can decide:
    ./scripts/23-build-mesa-android.sh && ./scripts/32-make-redroid-mesa-context.sh            # -> out/redroid-mesa/ (Route M, step 8)
    VARIANT=perf ./scripts/23-build-mesa-android.sh && VARIANT=perf ./scripts/32-make-redroid-mesa-context.sh   # optional: apercel too
    ./scripts/27-build-host-mesa.sh && VARIANT=cheezecs ./scripts/27-build-host-mesa.sh   # -> out/host-mesa/ (host Vulkan/GLES for 4a/4b)
-   rsync -a out/deploy out/route-l out/apercel out/fw out/host-mesa out/redroid-mesa out/redroid-mesa-perf out/redroid-pvr-c2 out/redroid-pvr-13-arm64.tar scripts/40-board-setup.sh scripts/41-gpu-open-tests.sh scripts/45-usb-net.sh scripts/50-board-report.sh scripts/55-storage-report.sh orangepi@<ip>:~/farm/
+   rsync -a out/deploy out/route-l out/apercel out/fw out/host-mesa out/redroid-mesa out/redroid-mesa-perf out/redroid-pvr-c2 out/redroid-pvr-13-arm64.tar out/redroid-a733-12-arm64.tar.zst out/redroid-a733-17-arm64.tar.zst scripts/40-board-setup.sh scripts/41-gpu-open-tests.sh scripts/45-usb-net.sh scripts/50-board-report.sh scripts/55-storage-report.sh orangepi@<ip>:~/farm/
    ```
 4. **Install the kernel, then reboot.** `cd ~/farm && ./40-board-setup.sh kernel && sudo reboot`. The package replaces `/boot/uImage`. Watch the serial log: U-Boot must load the uImage and the Zero 3W device tree, and the kernel banner must say `6.6.98-sun60iw2-redroid`. Then `uname -r`.
 4a. **GPU first, apercel (README 16.10).** The open driver someone already ran on a Zero 3W. Prove the GPU on the host before the redroid run.
@@ -103,6 +104,7 @@ Only the board can decide:
 8. **Optional, separate boot: Route M, the open stack inside redroid** (README 16.13). It needs apercel on the host instead of `pvrsrvkm`, so keep `pvrsrvkm` from loading at boot, then undo that afterwards:
    - Before rebooting: `sudo mv /etc/modules-load.d/pvrsrvkm.conf ~/farm/ && echo 'blacklist pvrsrvkm' | sudo tee /etc/modprobe.d/farm-route-m.conf && sudo reboot`. After boot, `lsmod | grep pvrsrvkm` must be empty.
    - Host driver: load apercel with fw 1.1 exactly as in step 4a.
+   - Other Android versions: `zstd -dc ~/farm/redroid-a733-12-arm64.tar.zst | sudo docker load` (or `-17-`), then use `redroid-mesa:12` or `redroid-mesa:17` in place of `redroid-mesa:13` below (README 18).
    - Image: `cd ~/farm/redroid-mesa && sudo docker build -t redroid-mesa:13 .`. If that boots, try the perf variant the same way (`~/farm/redroid-mesa-perf`, tag `redroid-mesa-perf:13`) and compare smoothness and `dumpsys gfxinfo` (README 16.15). The apercel variant is only for comparison: it trips a Mesa assertion (README 16.14).
    - One instance: `sudo docker run -itd --privileged --name android-m -p 5557:5555 redroid-mesa:13 androidboot.redroid_gpu_mode=host androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 androidboot.redroid_fps=30 androidboot.use_memfd=1`.
    - Check:
@@ -141,6 +143,18 @@ Only the board can decide:
       - one Android with hardware video and Allwinner's own compositor, the best case a container can approach;
       - whether the apps use `c2.allwinner.*` at all;
       - whether the vendor GPU stack stays stable with a live compositor.
+
+11. **Optional, once step 5 works: redroid 12 and redroid 17 on the same Route A driver** (README 18).
+    - **Run:** `sudo docker rm -f android1 android2 && IMAGE1=redroid-pvr:12 IMAGE2=redroid-pvr:17 ./40-board-setup.sh run`.
+      - It loads both images from `~/farm/redroid-a733-{12,17}-arm64.tar.zst` the first time.
+      - Each version gets its own data folder (`data1-12`, `data2-17`). Never point one Android version at another's `/data`.
+    - **Check:** `./50-board-report.sh` now prints each instance's image and Android version. Then:
+      - `ro.hardware.egl` must be `POWERVR_ROGUE` on both instances, and SurfaceFlinger must report PowerVR, as in step 6.
+      - Redroid 17 only: the IMG allocator runs (`adb -s <ip>:5556 shell getprop init.svc.vendor.gralloc-4-0` prints `running`), and minigbm's does not (`init.svc.vendor.graphics.allocator-4-0` prints nothing or `stopped`).
+      - `adb -s <ip>:5556 logcat -d | grep -i -E 'gralloc|allocator|mapper|libion|EGL'` for errors.
+    - **Order:** 12 first, then 17, one version per run if anything misbehaves (`IMAGE1=redroid-pvr:12` alone keeps instance 2 on 13).
+    - **Back to the plan:** `sudo docker rm -f android1 android2 && ./40-board-setup.sh run`.
+    - **Save:** the report folder, and which version booted, reached `boot_completed` and used the GPU.
 
 ## 4. How to read the result
 
@@ -194,6 +208,7 @@ For Route L (step 4b), the DRM name is `powervr` and the log shows `loaded firmw
 - If step 8 ran: `~/farm/route-m-logcat.txt`, the SurfaceFlinger dump, and which image (base or apercel variant) booted.
 - If step 9 ran: the codec grep per app and the two `docker stats` outputs (hardware on and off).
 - If step 10 ran: `top`, `gfxinfo` and the codec grep from the native Android image.
+- If step 11 ran: the report folder with the redroid 12 and 17 instances, plus the allocator `getprop` lines from redroid 17.
 - Both `55-storage-report.sh` outputs (after setup and after a day): the GB/day figure and the per-app cache sizes.
 - Board temperature under load: `cat /sys/class/thermal/thermal_zone*/temp`. The CPU starts throttling at 70 °C (README 17.6).
 - On a PC with internet, run `python3 -I scripts/60-mainline-watch.py` (README 16.9) and note anything marked `*` or `NEW`. Upstream may have moved since 2026-10-29.

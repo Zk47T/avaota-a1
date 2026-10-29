@@ -13,6 +13,8 @@
 #   VARIANT=perf ./scripts/23-build-mesa-android.sh   base plus 9 low-risk commits from BayLibre's
 #       android-17-pvr-perf branch (queue pipelining, scratch/spill reuse, copy fixes, an EGL
 #       Android fix), worktree src/mesa-perf. README section 16.15.
+#   API=31 ./scripts/23-build-mesa-android.sh   for redroid 12; API=35 for redroid 17 (NDK r29 stops at
+#       35; an API 35 build runs on Android 17). Default 33 = redroid 13. README section 18.
 #
 # Needs: micromamba at out/toolchains/micromamba (or MICROMAMBA=/path), git, curl, unzip.
 # Output: out/mesa-build/android-arm64 (meson build dir); 32-make-redroid-mesa-context.sh packages it.
@@ -23,6 +25,9 @@ B=$FARM/out/mesa-build
 M0=$FARM/src/mesa
 VARIANT=${VARIANT:-base}
 case "$VARIANT" in base) SFX= ;; apercel|perf) SFX=-$VARIANT ;; *) echo "VARIANT: base, apercel or perf"; exit 1 ;; esac
+API=${API:-33}
+case "$API" in 31|33|35) ;; *) echo "API: 31 (redroid 12), 33 (13) or 35 (17)"; exit 1 ;; esac
+ASFX=$([ "$API" = 33 ] || echo "-api$API")   # API 33 keeps the original build directory names
 M=$FARM/src/mesa$SFX
 E=$T/mesa-host                      # conda-forge env: LLVM/clang 19, SPIRV, meson, python
 TOOLS=$T/mesa-compiler$SFX          # host mesa_clc, vtn_bindgen2, pco_clc, pdsc_precomp (the
@@ -120,17 +125,22 @@ if [ "$STEP" = all ] && [ ! -x "$TOOLS/bin/mesa_clc" ]; then
   hostenv ninja -C "$B/native$SFX" -j"$JOBS" install
 fi
 
-if [ ! -f "$B/android-arm64$SFX/build.ninja" ]; then
-  printf "[constants]\nndk = '%s'\nvndk = '%s'\n" "$NDK" "$M/subprojects/vndk/arm64/include" > "$B/paths$SFX.ini"
-  (cd "$M" && hostenv PKG_CONFIG_LIBDIR= meson setup "$B/android-arm64$SFX" . \
-    --cross-file "$B/paths$SFX.ini" --cross-file "$FARM/config/mesa-android-aarch64-api33.ini" \
+A=$B/android-arm64$SFX$ASFX
+if [ ! -f "$A/build.ninja" ]; then
+  printf "[constants]\nndk = '%s'\nvndk = '%s'\n" "$NDK" "$M/subprojects/vndk/arm64/include" > "$B/paths$SFX$ASFX.ini"
+  # the cross file is written for API 33; only its API level changes
+  sed "s/^android_api_level = '33'$/android_api_level = '$API'/" "$FARM/config/mesa-android-aarch64-api33.ini" > "$B/cross-api$API.ini"
+  grep -q "^android_api_level = '$API'$" "$B/cross-api$API.ini"
+  (cd "$M" && hostenv PKG_CONFIG_LIBDIR= meson setup "$A" . \
+    --cross-file "$B/paths$SFX$ASFX.ini" --cross-file "$B/cross-api$API.ini" \
     --prefix=/vendor -Dbuildtype=release \
     -Dplatforms=android -Dandroid-stub=false -Dandroid-libbacktrace=disabled -Dandroid-strict=true \
     -Dgallium-drivers=zink -Dvulkan-drivers=imagination -Dgbm=enabled -Degl=enabled \
-    -Dgles1=enabled -Dgles2=enabled -Dglx=disabled -Dshared-glapi=enabled -Dplatform-sdk-version=33 \
+    -Dgles1=enabled -Dgles2=enabled -Dglx=disabled -Dshared-glapi=enabled -Dplatform-sdk-version=$API \
     -Dmesa-clc=system -Dprecomp-compiler=system -Dspirv-tools=disabled -Dimagination-srv=true \
     -Dllvm=disabled -Dallow-fallback-for=libdrm,perfetto -Dgbm-backends-path=/vendor/lib64/gbm)
 fi
-hostenv PKG_CONFIG_LIBDIR= ninja -C "$B/android-arm64$SFX" -j"$JOBS"
-echo "Mesa ($VARIANT): $(git -C "$M" describe --tags) + $(git -C "$M" rev-list --count "$MESA_BASE"..HEAD) BayLibre commits + local patch"
-echo "next: VARIANT=$VARIANT ./scripts/32-make-redroid-mesa-context.sh"
+hostenv PKG_CONFIG_LIBDIR= ninja -C "$A" -j"$JOBS"
+echo "Mesa ($VARIANT, API $API): $(git -C "$M" describe --tags) + $(git -C "$M" rev-list --count "$MESA_BASE"..HEAD) BayLibre commits + local patch"
+case "$API" in 31) R=12 ;; 33) R=13 ;; 35) R=17 ;; esac
+echo "next: REDROID=$R VARIANT=$VARIANT ./scripts/32-make-redroid-mesa-context.sh"

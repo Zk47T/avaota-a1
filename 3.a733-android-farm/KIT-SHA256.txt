@@ -22,6 +22,8 @@ e54159ea463e14c918cd096b91113a40d86c0c22afe2478f7f2c05ed25fe7f18  out/apercel/gp
 1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2  out/fw/1.1/rogue_36.56.104.183_v1.fw
 0a2b0b447b3e97bb104b05f2e27abbf8f281d40f6eb76612582db0e8267a93ef  out/host-mesa/mesa-farm-arm64.tar.gz
 c10bdf9c60112260c0ba9e56b6066914a96a4ed75401b7f2f5d1d6a44f62806b  out/host-mesa/a733-mesa_26.3.0~rc2+apercel.751f3c5c_arm64.deb
+577c8c1c575da3a705cc939fa777588ab9efc5db37a26da7441e5657a0ae7975  out/redroid-a733-12-arm64.tar.zst
+a328e69d98555aa1da339b645a6b99d5a10b68092fa0cb1e33be1ccb50141a0b  out/redroid-a733-17-arm64.tar.zst
 55f47a6db2e3254d1711fffc98090e715519d6bc44305e2a4361dffc4801c2a8  out/redroid-mesa-perf/Dockerfile
 a59a382a5c1f8c261c0d1d383a6791c0e61070b57493f727ff4db7526ed36367  out/redroid-mesa-perf/MANIFEST.txt
 86812ee33d1fa09cde706593586cd56f2196f7a01b026ad67dd4f151bfe32718  out/redroid-mesa-perf/vendor/bin/gpu_config.orig.sh
@@ -34,8 +36,8 @@ fb00b05b8db76932867ea8d456bdf793945a62ded0bbfccad67aed1dcb8f8a63  out/redroid-me
 750c4ed5acef991da25b85c46e4d53bafe87d242aa0a62b4c238543dd84d66d5  out/redroid-mesa-perf/vendor/lib64/hw/vulkan.mesa.so
 f541ca109495b5e42f84e29fbb18260ae9bc0490c974499e10e19ee1ec1f0d9f  out/redroid-mesa-perf/vendor/lib64/libgallium_dri.so
 81da46c610937d8d088e05f486fc0a1a792964553f68b0e6aeb01d1a3dda7f2a  out/redroid-mesa-perf/vendor/lib64/libgbm.so.1
-55f47a6db2e3254d1711fffc98090e715519d6bc44305e2a4361dffc4801c2a8  out/redroid-mesa/Dockerfile
-e6eeb4c4f042c48cad02b50926af2174ad15942ea8322cd5ec32c1f6ac892a7d  out/redroid-mesa/MANIFEST.txt
+65d6d65d4270c09a5790d158b7604e9aa6d31b4ef8ef72e930d7131db2b4b096  out/redroid-mesa/Dockerfile
+b8b299cf9606d8dae6c248d516b41ea80803c52f1e8913c86d05555d728e218a  out/redroid-mesa/MANIFEST.txt
 86812ee33d1fa09cde706593586cd56f2196f7a01b026ad67dd4f151bfe32718  out/redroid-mesa/vendor/bin/gpu_config.orig.sh
 a0d4d0e6e8647c91953e6de8a98fff6fc5bfb2aab8e691388907d93a2564925c  out/redroid-mesa/vendor/bin/gpu_config.sh
 a3f70a6982bdf59b3b4e54d3b341a13e5efdaa6560c7fa2e7212f65f9656d7b7  out/redroid-mesa/vendor/etc/init/redroid.common.rc
@@ -124,8 +126,8 @@ b6eea482ab1d2f6517e102de07120fb291d8d41d3ea7128e7b0c87f6ecff07a7  out/redroid-pv
 44c87d70fa1f9791bdf2e55640b47f7e336d905b9d1b75b0993d302a920ccbcd  out/redroid-pvr-c2/vendor/lib64/libvencoder.so
 a28baca84146f4e5f700f9aec2c740d22e1afcdc68515299bdec75a4aab0026c  out/redroid-pvr-c2/vendor/lib64/libvideoengine.so
 c2558cf5b0a45ead5b07bc922f23c2cbd87340ec6ee903b0b82c04d894647d8c  out/redroid-pvr-c2/vendor/lib64/vendor.hardware.drmheapallocator-V1-ndk.so
-b0bca5a7f39054ac9eedd1f910833e4c761999c49f798fdc87a91a196915b7c2  scripts/40-board-setup.sh
+8e9b6d7857169c68e66391e5a4a645e29fc25d94eccac44b748486c9631e23c4  scripts/40-board-setup.sh
 5d8ca1c8f3be394319de4ba87ef8d6b06931d71635eaf99999e05c2b062459b7  scripts/41-gpu-open-tests.sh
 1aae9f3f760c7a8d98564f0929f06e902dd8efd0c1694094be922bd7b32517aa  scripts/45-usb-net.sh
-28ef52663828c84e4d33cbf916f2fbf99dc77b510d4a6e76e18a4e815fdff04d  scripts/50-board-report.sh
+c10d890bf167f5d47d57fba582273fbf82b097b3237dc5f5b4412f6e3fd28c89  scripts/50-board-report.sh
 72457d642484d7b0f5f244256f39e23278f9dc880ab2d5794f62c6b0da269353  scripts/55-storage-report.sh
