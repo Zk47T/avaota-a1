@@ -381,6 +381,24 @@ Density levers for our A733 boards, in order of gain:
 3. `docker pause` (cgroup freezer, already `CONFIG_CGROUP_FREEZER=y`) for instances not in use.
 4. KSM: **currently `# CONFIG_KSM is not set`** in our kernel. Enabling it needs `CONFIG_KSM=y` plus process-wide merging (`prctl(PR_SET_MEMORY_MERGE)`, Linux 6.4+, inherited across fork) on the container's init. Worth it only when RAM, not CPU, is the limit, for example 3 instances on 6 GB.
 
+**CIX P1 (Orange Pi 6 / 6 Plus, Radxa Orion O6) for 8 instances?** (checked 2026-10-29)
+- **CPU:** 4× A720 @ 2.6–2.8 + 4× A720 @ 2.4 + 4× A520 @ 1.8 GHz. Geekbench 6 measured on Orange Pi 6/6 Plus is about **1,330 single, 6,700–7,100 multi** (bret.dk). That is roughly **2.2× an RK3588 in multi-core and 1.6× in single-core** (RK3588 ≈ 3,000 / 800, commonly reported, approximate).
+  - Scaling the user's 3 active instances per RK3588 gives **about 6–7 instances with software video decoding**.
+  - **8 is realistic only with the hardware decoder** in the containers. The redroid port below already uses the CIX VPU encoder (`c2.cix.avc.encoder`).
+- **RAM:** 8 × 1.3–1.9 GB plus a bigger host (about 1–1.5 GB) is 12–17 GB.
+  - 16 GB works for 8 only with zram, no GMS and one app per instance.
+  - **24 GB is the sweet spot for 8.** The plain Orange Pi 6 is reported with up to 24 GB; check the local SKU.
+  - 32 GB does not add instances: the CPU caps them first.
+  - Memory bus: 128-bit LPDDR5, about 4× the A733's width, so it is not the limit.
+- **GPU in redroid: already working.** `li-chx/redroid-orangepi6p` runs Android 14 in redroid on the Orange Pi 6 Plus with the vendor kernel `6.6.89-cix-redroid`, Mali EGL/Vulkan and Arm gralloc inside the container (vendor-blob style, like our Route A), plus hardware H.264 encode. It is marked experimental, with no instance count published.
+  - Mainline `panthor`/Mesa on the G720 is not proven on CIX yet: one review got "unknown gpu_id" from Panfrost and needed `mali_kbase`.
+- **Power:** about 13 W idle and 27 W loaded (41–44 W in Linpack). At 8 instances that is about 3–4 W per instance, the same order as the A733.
+- **Price:** list prices were $199 (16 GB) and $249 (32 GB) in late 2025. A July 2026 review paid $359 (Orange Pi 6, 16 GB) and $669 (6 Plus, 32 GB) after the memory price rise.
+  - Compare per instance: the A733 Zero 4 is 2.4 tr for 2, so 1.2 tr each. A P1 board costs 1.2 tr each only if it delivers 8 instances at about 9.6 tr or less.
+- **Other notes:**
+  - One review saw DDR controller errors and shutdowns under a heavy 8B LLM load: soak-test before trusting it.
+  - One board failing takes down 8 instances, against 2 on an A733.
+
 ### 8.3 Which A733 board for the farm; the Zero 2W expansion board does not fit the Zero 3W
 
 **The Zero 2W expansion board is not compatible with the Zero 3W.** Don't plug it in.
