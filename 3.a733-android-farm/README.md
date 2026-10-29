@@ -833,3 +833,36 @@ A hand-merged compiler cannot be tested without a GPU, so I stopped there.
 It can't check pixels, but it runs the real Zink → SPIR-V → pco compile, pipeline creation, command recording and submission. **base: OK. perf: OK** (no assert, no GL error). The apercel variant fails at Vulkan start with the timeline assertion (section 16.14).
 
 **Variant order for BOARD-DAY step 8:** base first (closest to upstream), then perf (expected faster, same feature level), apercel only to compare.
+
+### 16.16 Upstream prep: what a mainline A733 GPU node would look like (draft, 2026-10-29)
+
+Mainline already has two of the needed pieces, and a third is in review:
+- The A733 power-domain driver marks **GPU_CORE always-on** (`b462a227d854`), so a GPU node needs only `PD_GPU_TOP` (= 5 in `include/dt-bindings/power/allwinner,sun60i-a733-pck-600.h`).
+- The PowerVR binding has a "single unified power domain" group (K1, K3, TH1520).
+- The A733 CCU series v6 (Junhui Liu, 2026-10-09, in review) defines `CLK_GPU0` (133), `CLK_BUS_GPU0` (134), `CLK_MBUS_GPU0` (78), `CLK_AHB_GPU0` (67), `CLK_PLL_GPU0` (23) and `RST_BUS_GPU0` (31). Mainline numbering differs from the vendor's `RST_BUS_GPU0` = 32.
+
+**Clock mapping.** The binding's names are `core`, `mem`, `sys`, which map naturally to `CLK_GPU0`, `CLK_MBUS_GPU0` and `CLK_BUS_GPU0`. That is three clocks, like the TH1520. The vendor driver never touches the MBUS gate. A mainline node must reference it anyway, or `clk_disable_unused` may turn the GPU's memory port off at boot.
+
+**Binding change** (`Documentation/devicetree/bindings/gpu/img,powervr-rogue.yaml`): add `allwinner,sun60i-a733-gpu` in three places:
+1. the `img,img-bxm-4-64` compatible enum, with `spacemit,k3-gpu` and `thead,th1520-gpu`;
+2. the `if` block that requires three clocks (`img,img-ge7800`, `img,img-gx6250`, `thead,th1520-gpu`);
+3. the `if` block for one unified power domain (`spacemit,k1-gpu`, `spacemit,k3-gpu`, `thead,th1520-gpu`).
+
+**SoC dtsi node** (once `sun60i-a733.dtsi` and the CCU land). Untested. Check `reg` against the A733 memory map; the vendor DT says `0x1800000`, size `0x8ffff`:
+```dts
+gpu: gpu@1800000 {
+	compatible = "allwinner,sun60i-a733-gpu", "img,img-bxm-4-64", "img,img-rogue";
+	reg = <0x01800000 0x90000>;
+	interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;	/* vendor: IRQGPU 63, IRQGPUDVFS 64 */
+	clocks = <&ccu CLK_GPU0>, <&ccu CLK_MBUS_GPU0>, <&ccu CLK_BUS_GPU0>;
+	clock-names = "core", "mem", "sys";
+	resets = <&ccu RST_BUS_GPU0>;
+	power-domains = <&pck600 PD_GPU_TOP>;
+	status = "disabled";
+};
+```
+Board DTS: `&gpu { status = "okay"; };`. The GPU rail is AXP318W `dcdc4` (vendor `reg_dcdc4`, always-on), so the node can stay without a supply until the driver does DVFS.
+
+**Driver line** (`drivers/gpu/drm/imagination/pvr_device.c`, `pvr_gpu_support_level()`): mainline lists only SUPPORTED cores today. A first step would be `case PVR_PACKED_BVNC(36, 56, 104, 183): return PVR_GPU_EXPERIMENTAL;`, so the driver still needs `exp_hw_support=1` but no longer calls the GPU unknown. Imagination promotes cores to SUPPORTED after Mesa conformance (as `e55fead22ff9` did for 36.52.104.182), and the K3 work will likely send this line first.
+
+**Before sending anything:** board evidence from the Zero 3W (apercel and the shim already show the GPU and firmware work with this register layout), and `make dtbs_check`. The kernel and Mesa both require AI-assisted patches to be disclosed (kernel `Documentation/process/` guidance on coding assistants; Mesa's `AGENTS.md`). Write the patches and their descriptions yourself, and use these notes as a checklist.
