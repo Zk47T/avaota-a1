@@ -13,6 +13,7 @@ every undefined global symbol (and its symbol version) is exported by the
 library's dependency closure.
 
 usage: redroid_link_check.py <redroid rootfs> <overlay vendor dir>
+       LINK_CHECK_LIBS="lib64/a.so lib64/b.so" also checks dlopen()ed vendor libs
 """
 import os
 import sys
@@ -175,6 +176,9 @@ def main():
             p = os.path.join(full, f)
             if os.path.isfile(p) and open(p, "rb").read(4) == b"\x7fELF":
                 targets.append((p, ns))
+    # libraries a vendor process dlopen()s by name (e.g. the Cedar decoder plugins)
+    for rel in os.environ.get("LINK_CHECK_LIBS", "").split():
+        targets.append((os.path.join(OVL, rel), "vendor"))
     bad = 0
     for p, ns in targets:
         order, origins, problems, missing = check(p, ns)

@@ -9,3 +9,6 @@
 # A733 DDR study: vendor binaries and generated output (scripts/00-fetch.sh)
 4.a733-ddr/src/
 4.a733-ddr/out/
+
+# Orange Pi A733 manuals and schematics (3.a733-android-farm/scripts/00-fetch-sources.sh opi)
+2.docs/orangepi-a733/

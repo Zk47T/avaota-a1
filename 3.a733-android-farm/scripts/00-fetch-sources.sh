@@ -2,7 +2,8 @@
 # Recreate src/ at the exact commits this project was built and checked with.
 # Shallow + sparse: ~2.5 GB download (most of it is the kernel).
 #   ./scripts/00-fetch-sources.sh            all repos
-#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw apercel)
+#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw apercel opi;
+#                                            opi = Orange Pi docs + Android images, only when named)
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$FARM/src"
@@ -47,6 +48,8 @@ if want ref || [ -z "$SEL" ]; then
   fetch device-a733 $GL/tina5.0_aiot/lichee/device/config/a733.git      fe97b52284c56fd1c3c347f526bee00b07fc830d
   fetch radxa-android-manifest $GH/radxa/allwinner-android-manifests  ed4ee7b1718569b0fe14932345b51776b9b42331
   fetch device_redroid-13 $GH/remote-android/device_redroid           736f66d8548e75c1255f8fe97b8e90c21e7dda35
+  # Allwinner's Codec2 HAL source for A733 Android 13 (README 17.4)
+  fetch aw-libcodec2 $GL/aw_android13/platform/tidy/platform/hardware/aw/libcodec2.git 7ac742728423d885631602cea0ef7e8eb145f2ec
   fetch orangepi-build-cfg $GH/orangepi-xunlong/orangepi-build.git    a95129bf30ea11886cc35f08ebb3e69695a26656 \
         '/external/config/boards/orangepizero3w.conf' '/external/config/boards/orangepizero4.conf' \
         '/external/config/kernel/*sun60iw2*' '/external/config/sources/families/sun60iw2.conf' \
@@ -77,5 +80,27 @@ if want apercel || [ -z "$SEL" ]; then
   #  - CheezeCS/armbian-a733-gpu: the Armbian integration (Kconfig prompts, Mesa build script, docs)
   fetch apercel         $GH/CheezeCS/apercel.git          d03675d4a38e1aa8eb7c0e982e213893a8631baa
   fetch armbian-a733-gpu $GH/CheezeCS/armbian-a733-gpu.git 6960be5081795368f697a8da772f76d71a5203ff
+fi
+# drive FILE ID SHA256: one file from Orange Pi's public Google Drive, checked
+drive() {
+  if echo "$3  $1" | sha256sum -c --status 2>/dev/null; then echo "ok    ${1##*/}"; return; fi
+  echo "fetch ${1##*/}"
+  mkdir -p "$(dirname "$1")"
+  curl -fsSL -o "$1" "https://drive.usercontent.google.com/download?id=$2&export=download&confirm=t"
+  echo "$3  $1" | sha256sum -c
+}
+if want opi; then   # not in the default set: 3.3 GB of images
+  # Orange Pi's official A733 documents (README 17.1) and Android images (README 17.2).
+  # The images feed scripts/33 (Codec2 HAL) and the DDK 25.1 notes. Checked 2026-10-29.
+  DOC=$FARM/../2.docs/orangepi-a733
+  drive "$DOC/OrangePi_Zero3W_A733_User Manual_v1.0.pdf"  1R1MC9erKTztd87GvJ_UFE132x6KgPATe a4593068bf885296ea204529b880e874acb8f060bb21735c833f63305adb8cdf
+  drive "$DOC/OPI ZERO 3W V1_2 Schematic Diagram.pdf"     1layhtSvMpQo-z_iMJjNfNVvhPhObpsvW 4e0e92afbb1cca97a9c8593b8f2679178d9738f242ea431ed3650e893fe28ed0
+  drive "$DOC/OrangePi_Zero4_A733_User Manual_v1.0.pdf"   18DO5XfrXanwJIxG3GP1tOxrkdexNzRO4 3045e84c96baacb2b29b40159128640a613a41343b87254dee9266910a345b6c
+  drive "$DOC/Opi zero 4 V1_5.zip"                        11n_jS-nm30nq894ldpM5Aca4b7AIzcGa 76e6b0bf150acfe202ebafcbef065b7679621ca8422dcb992d161480ee63b518
+  drive "$DOC/OrangePi_4_Pro_A733_User Manual_v1.4.pdf"   1ztP6FUIX1H1b1q_i6v-wVLBoDi6-RfWE 91197f6046cb59a7032ee5fc45f08cafa9986e213bff7a8abf2d8be2492f23ce
+  drive "$DOC/OPI 4 PRO V1_3_2_20260109.pdf"              1uBjcmxtbsLXRwO0SNQnwHng_JTqoSl7X 94870b7c131a551821ed15c3450a221dcab8999099a140b18941048af67cda08
+  IMG=$FARM/out/cache/opi-android
+  drive "$IMG/OrangePiZero3W_A733_Android13_v1.0.tar.gz"  1pkdnQSufB3uY3vTj3uskWLsNV8w7cPD1 8081ff479cb1e621a09ada104cb0b865325b559dae76e0a2f5f46ceffe606c4d
+  drive "$IMG/OrangePiZero4_A733_Android16_v1.0.tar.gz"   1utu_-tKOYXmWC0F5LHazwTJ2Jw8OWUAY f5a491e2faae8eff73dbac400662e4d30dacdef4255ed89b6bbeaa3b68b4b40c
 fi
 du -sh "$FARM/src"

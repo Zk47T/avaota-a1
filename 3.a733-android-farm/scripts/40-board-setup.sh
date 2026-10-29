@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # RUN ON THE ORANGE PI (Orange Pi Debian bookworm, "current" 6.6 kernel).
 # Copy the outputs to the board first, e.g.
-#   rsync -a out/deploy out/redroid-pvr orangepi@<ip>:~/farm/
+#   rsync -a out/deploy out/redroid-pvr out/redroid-pvr-c2 orangepi@<ip>:~/farm/
 # Stage 1 (kernel):  ./40-board-setup.sh kernel   -> reboot
 # Stage 2 (gpu+run): ./40-board-setup.sh run
+#   CODEC2=1 ./40-board-setup.sh run   also gives the containers the video engine
+#                                      (Allwinner Codec2 HAL, script 33, README 17)
 set -euo pipefail
 D=${FARM_DIR:-$HOME/farm}
 REL=6.6.98-sun60iw2-redroid
@@ -33,12 +35,23 @@ run)
   ls -l /dev/dri/ /dev/pvr_sync 2>/dev/null || true
   mountpoint -q /sys/kernel/debug || sudo mount -t debugfs none /sys/kernel/debug
   for n in /sys/kernel/debug/dri/*/name; do echo "  $n: $(sudo cat "$n")"; done
+  if [ "${CODEC2:-0}" = 1 ]; then
+    echo "== 2b. video engine for the containers' Codec2 HAL"
+    sudo modprobe sunxi-ve && sudo modprobe deinterlace || true
+    printf 'sunxi-ve\ndeinterlace\n' | sudo tee /etc/modules-load.d/sunxi-ve.conf >/dev/null
+    ls -l /dev/cedar_dev* /dev/deinterlace /dev/sunxi_soc_info 2>/dev/null || true
+  fi
 
   echo "== 3. docker + image"
   command -v docker >/dev/null || { curl -fsSL https://get.docker.com | sudo sh; }
   if sudo docker image inspect redroid-pvr:13 >/dev/null 2>&1; then echo "image present"
   elif [ -f "$D/redroid-pvr-13-arm64.tar" ]; then sudo docker load -i "$D/redroid-pvr-13-arm64.tar"
   else (cd "$D/redroid-pvr" && sudo docker build -t redroid-pvr:13 .); fi
+  IMAGE=redroid-pvr:13
+  if [ "${CODEC2:-0}" = 1 ]; then
+    IMAGE=redroid-pvr-c2:13
+    sudo docker image inspect $IMAGE >/dev/null 2>&1 || (cd "$D/redroid-pvr-c2" && sudo docker build -t $IMAGE .)
+  fi
 
   echo "== 4. CPU layout: host on cpu0 (A55), Android on cpu1-7"
   # A55 = cpu0-5 (capacity 430/MHz), A76 = cpu6-7 (1024/MHz). cgroup v2 slices:
@@ -77,7 +90,7 @@ run)
       --cgroup-parent=android.slice --cpuset-cpus=$CPUS \
       --memory=$LIMIT --memory-swap=$(( ${LIMIT%m} + 1024 ))m \
       "${VOL[@]}" -p $((5554+i)):5555 \
-      redroid-pvr:13 \
+      $IMAGE \
       androidboot.redroid_gpu_mode=host \
       androidboot.redroid_width=720 androidboot.redroid_height=1280 androidboot.redroid_dpi=320 \
       androidboot.redroid_fps=30 androidboot.use_memfd=1 $EXTRA
