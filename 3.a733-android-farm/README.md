@@ -525,11 +525,17 @@ All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.d
 - Both boards have a BGA153 footprint, empty from the factory (manual: "default blank sticker").
 - The Zero 3W and Zero 4 trees enable the controller (`sdc2`, HS400, 8-bit) but leave both supplies commented out.
 - `scripts/16-build-emmc-dtb.sh` builds `out/emmc-dtb/sun60i-a733-orangepi-{zero3w,zero4}-emmc.dtb`:
-  - vmmc = `reg_dc1sw2` (3.3 V, net `VCC_3V3_EMMC`), vqmmc = `reg_cldo1` (net `VCC-1V8-EMMC`), checked by decompiling: those two properties are the only difference;
-  - the DT allows `cldo1` 0.5–3.5 V, so **meter VCCQ = 1.8 V before the first eMMC boot**.
+  - vmmc = `reg_dc1sw2` (3.3 V, net `VCC_3V3_EMMC`), checked by decompiling: that property is the only difference from the stock tree.
+  - **Corrected 2026-10-30: `vqmmc` stays unset.**
+    - Both schematics put `VCC-1V8-EMMC` on DCDC8's always-on "1.8V" net (Zero 3W pages 3/6, Zero 4 V1.5 page 5). On the Zero 4 that net also feeds `VDD18-LPDDR`, VCC-PC/PM and the Wi-Fi I/O.
+    - The `reg_cldo1` in the vendor comment is a template line for another board; it is unused on the Zero 4.
+    - Our first version named `cldo1`. That was harmless only because `sunxi-dis-signal-vol-sw` stops the driver from switching (`sunxi-mmc.c`). Without that property, the MMC core sets vqmmc to 3.3 V at power-up, which on a shared 1.8 V rail would damage whatever else it feeds.
+    - Both rails are always on, so the stock tree also runs a fitted eMMC.
+  - **Meter VCCQ = 1.8 V before the first eMMC boot.**
 - Allwinner's production guides in `2.docs` (`Linux_eMMC物料_验证指南`, `eMMC硬件_排查指南`) give the eMMC check and debug steps.
 - There is no A733 eMMC support list. The A523 list (V1.139, 2023) names tested parts such as Samsung KLMAG1JETD/KLMAG2*, SanDisk SDINBDG4-16G and Micron MTFC16GAKAECN; prefer a listed part.
 - Orange Pi's manual covers writing the Linux image to eMMC (§3.34).
+- Which chips fit, the UFS option, the tools and the soldering steps: main README 3.13.
 
 **Without soldering: the Orange Pi 4 Pro.**
 - It has a socket for Orange Pi's eMMC modules (16–128 GB).

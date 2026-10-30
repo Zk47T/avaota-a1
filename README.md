@@ -1474,6 +1474,100 @@ Their "v2" plan (port BSP MMC, then PCIe + combo PHY, then USB PHY to a mainline
 
 ---
 
+### 3.13 Zero 3W eMMC and UFS: which chips fit, and what to prepare for soldering (2026-10-30)
+
+**Sources.** Most facts below come from Orange Pi's Zero 3W schematic V1.2 (`2.docs/orangepi-a733/`):
+- page 2: the power tree;
+- page 3: `U6`, eMMC;
+- page 4: `U8`, UFS;
+- page 6: the PMIC;
+- page 10: the boot select.
+
+The rest come from the A733 datasheet V1.01, the Orange Pi 6.6 device tree and Allwinner's A523 eMMC support list V1.139 (`2.docs/docs/A523/…`). Nothing here has been soldered yet.
+
+**What the two footprints are:**
+
+| | eMMC (`U6`) | UFS (`U8`) |
+|---|---|---|
+| Package | BGA153, 11.5 × 13 mm, 0.5 mm pitch, JEDEC eMMC ball map | FBGA153, 11.5 × 13 mm, max 1.0 mm high (`FBGA153_11R5X13R0X1R00`) |
+| SoC side | SMHC2, 8-bit, HS200/HS400, eMMC 5.1 | 2-lane UFS 3.0 host, M-PHY 4.1, HS-G1…G4 (driver asks for G4) |
+| VCC | 3.3 V, DC-DC1 → SW2 (`VCC_3V3_EMMC`), always on | `VCC_UFS_S0` from DLDO6, labelled **`VCC25-UFS` (2.5 V)** in the power tree. Software-set rail: measure it. |
+| VCCQ | 1.8 V, DCDC8's always-on "1.8V" net (`VCC-1V8-EMMC`) | 1.2 V, DCDC9 (`VCC1V2_UFS_VCCQ_S0`) |
+| VCCQ2 | – | 1.8 V only through `R1133` "0R/NC" (needed by UFS 2.x only) |
+| Small parts on the footprint's rails | VDDI: C257 2.2 µF, C271 100 nF (0201) | VCCQ: C306 and C308 100 nF, C314 1 µF, C315 4.7 µF, C307 10 µF<br>VCCQ2: C312 100 nF, C313 10 µF<br>VCC: C309 100 nF, C310 1 µF, C311 10 µF<br>VDDI/VDDIQ/VDDIQ2: C302–C304 2.2 µF<br>RST_N: C305 1 nF |
+| Linux | `sdc2` enabled in the stock tree | `ufs@4520000` enabled in the stock tree |
+
+- **Boot order.** The Zero 3W's `BOOT-SEL-ADC` has only R24 (10 kΩ to AVCC), which puts the pin at 1800 mV. Per the table on page 10 that means: SD card first, then UFS, then the other media.
+  - Orange Pi ships `boot0_ufs_orangepizero3w.fex`.
+  - `nand-sata-install` has "Boot from eMMC" (2) and "Boot from UFS" (8), manual §3.36/3.37.
+  - An SD card with a system on it always wins. Remove it to boot from the soldered chip.
+- **Both footprints can be fitted at once.** They are separate parts on separate buses.
+- **Correction for our eMMC device tree.**
+  - The vendor DT comment names `reg_cldo1` for the eMMC 1.8 V. On these boards the eMMC's 1.8 V is DCDC8. On the Zero 4, DCDC8 also feeds the LPDDR5 1.8 V rail, and `CLDO1` is unused.
+  - `scripts/16` no longer sets `vqmmc` (farm README 8.4).
+
+**eMMC: parts Allwinner tested on the A523.** These are marked "S/T" (sample fully tested) in the A523 list. The A523 has the same SMHC family as the A733; there is no A733 list. All are eMMC 5.1 (Kingston W525: 5.0) in BGA153 11.5 × 13, and Allwinner labels all of them MLC. MLC lasts much longer than TLC, which matters for the farm's write load (farm README 8.4).
+
+| Size | Samsung | Kioxia (Toshiba) | SanDisk | Kingston |
+|---|---|---|---|---|
+| 16 GB | **KLMAG1JETD-B041**, KLMAG1JENB-B041 | THGBMHG7C1LBAIL | SDINBDG4-16G-XA (automotive) | EMMC16G-W525 (industrial) |
+| 32 GB | **KLMBG2JETD-B041**, KLMBG2JENB-B041 | THGBMHG8C2LBAIL | SDINBDG4-32G | EMMC32G-W525 (industrial) |
+| 64 GB | KLMCG4JETD-B041 | THGBMHG9C4LBAIL | SDINBDG4-64G | EMMC64G-W525 |
+
+- Ask the seller of the 0.55 tr chip for its exact part number, and prefer one from this table.
+- Allwinner's own verification guide (`2.docs/docs/Product…/Linux_eMMC物料_验证指南.pdf`) tightened its tests because of *拆机料*, salvaged parts on the market.
+  - A salvaged chip may already be worn.
+  - Read its wear estimate as soon as it runs (`mmc extcsd read`, `LIFE_TIME_EST_TYP_A/B`; `0x01` = 0–10 % used).
+
+**UFS: buy UFS 3.x, with VCC 2.4–2.7 V and VCCQ 1.2 V.** The board gives 2.5 V and 1.2 V, as Allwinner's own demo board does for UFS 3.x ("VCC-UFS 2.5 V, UFS-VCCQ 1.2 V"). There is no Allwinner UFS list here, so check every datasheet.
+
+| Part | What it is | Notes |
+|---|---|---|
+| Kingston UFS64G-CY14-02N01 | 64 GB UFS 3.1, 2.5 V (2.4–2.7 V), FBGA153 11 × 13 | distributor data; TLC |
+| Kingston UFS 3.1, CY14-02J01 family (64/128 GB) | UFS 3.1, VCC 2.4–2.7 V, VCCQ 1.14–1.26 V | Kingston datasheet "UFSnnn CY14 02J01" |
+| Kioxia THGJFGG9T15BAA8 / BAB8 | 64 GB UFS 3.1, automotive, VCCQ 1.14–1.26 V | VCC 2.4–2.7 V or 2.7–3.6 V; 1.2 mm high, while the footprint is drawn for 1.0 mm max: check the clearance |
+| Samsung KLUDG4UHDB-B2D1 | 128 GB UFS 3.1, common on marketplaces | voltages not confirmed; buy only with a datasheet |
+
+- **UFS 2.1/2.2 parts** (for example Samsung KLUCG4J1ED-B0C1, 64 GB, or Kioxia THGAF8G8T23BAIL, 32 GB) need VCC 2.7–3.6 V plus VCCQ2 1.8 V.
+  - On this board that means DLDO6 at 3.3 V and fitting `R1133`.
+  - Skip them unless you want that exercise.
+- The A733 runs UFS at up to HS-G4 × 2 lanes. That is far beyond what the farm needs. eMMC is the practical farm storage, UFS the learning exercise.
+
+**Do not buy:**
+- **Combo packages.** eMCP and uMCP put eMMC or UFS and LPDDR in one package: BGA162/221/254/297, for example Samsung `KMxxx`, SK hynix `H9TQ…`/`H9HQ…`. Many phone-salvage chips are these. Only discrete eMMC (`KLM…`, `THGBM…`, `SDIN…`, `MTFC…`, `H26M…`) or discrete UFS (`KLU…`, `THGAF…`/`THGJF…`, `H28U…`) fits.
+- **BGA169, 12 × 16 mm eMMC.** Its ball map is a superset, but this footprint is drawn for 11.5 × 13. Not checked here.
+
+**What to prepare:**
+
+| Group | Items |
+|---|---|
+| Heat | Hot-air station with small round nozzles (8–12 mm). **Bottom preheater** with a board holder, because the board is 1.2 mm thick. K-type thermocouple to check the profile: about 150–170 °C preheat; peak about 235–245 °C for lead-free balls, about 210–220 °C with Sn63/37. |
+| Shielding | Kapton tape and aluminium tape over the LPDDR5, SoC, PMIC and connectors. **The SoC and LPDDR5 sit on the other side of the same thin board:** keep the airflow low and the preheat moderate. |
+| Pads | Fine iron tip (knife or 1.2 mm bevel), 1.5–2 mm low-residue wick, leaded solder wire, gel no-clean flux (Amtech NC-559 type), 99 % IPA, lint-free swabs. |
+| Reballing (salvaged or reused chips) | BGA153 stencil, 0.5 mm pitch (eMMC/UFS 153 sets), reballing jig, 0.30 mm Sn63/37 balls or leaded paste. Leaded balls lower the reflow peak, which protects the BGAs on the other side. |
+| Small parts, if the footprint's own are missing | 0201 X5R capacitors: 100 nF, 1 µF, 2.2 µF, 1 nF. 0402: 4.7 µF, 10 µF. A 0201 0 Ω for `R1133`, only for UFS 2.x. |
+| Inspection | Stereo microscope (7–45×), ESD mat and strap, tweezers, multimeter. A bench supply with a current readout for the first power-up. |
+
+**Steps:**
+1. **Before soldering.** Boot the stock Debian from SD.
+   - Check whether the passives in the table above are fitted on your board, and photograph both sides.
+   - Measure the rails on the capacitor pads:
+     - eMMC VCC 3.3 V, VCCQ 1.8 V;
+     - UFS VCC: **expect 2.5 V, record the value**;
+     - UFS VCCQ 1.2 V;
+     - UFS VCCQ2 only if R1133 is fitted.
+   - **Don't fit a UFS 3.x chip if the UFS VCC reads 3.3 V.**
+   - Orange Pi's placement drawing ("Position Diagram", same Drive folder as the schematic) shows where `U6` and `U8` sit. The download was over its quota on 2026-10-30.
+2. **Solder.** Apply flux, align by the silkscreen corner and pin 1, and let the chip self-align at reflow. Don't push it.
+3. **First power-up.** Use the bench supply: 5 V, and watch the current against the board without a chip. Then:
+   - eMMC: `dmesg | grep mmc`, `cat /sys/kernel/debug/mmc*/ios` (look for `mmc HS400`), and `sudo mmc extcsd read /dev/mmcblkN | grep -iE 'LIFE|EOL'`.
+   - UFS: `dmesg | grep -i 'sunxi ufs'` should show `gear=[4, 4], lane[2, 2]`; the device is `/dev/sda`.
+   - If HS400 gives CRC errors (hand-soldered parts can), drop to HS200: remove `mmc-hs400-1_8v` from `sdc2`. Allwinner's verification guide says HS400 at 200 MHz needs its own validation.
+4. **Test, then install.**
+   - Test: `fio` random 4K and sequential reads and writes, then a long write/verify pass. That is the core of Allwinner's verification guide; the rest is reboot and standby loops and temperature runs.
+   - Install: `sudo nand-sata-install` → 2 (eMMC) or 8 (UFS).
+   - For the farm boards, run `55-storage-report.sh` after a day.
+
 ## 4. Sources
 
 Local (this repo):

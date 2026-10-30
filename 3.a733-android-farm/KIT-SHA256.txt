@@ -1,6 +1,7 @@
 # A733 farm kit, sha256: built on the build PC 2026-10-28, extended 2026-10-29, redroid images rebuilt 2026-10-30 (logs/2026-10-29-board-day-builds/).
 # Verify from the kit folder on the build PC: sha256sum -c KIT-SHA256.txt. On the board, each out/ folder that has one checks with its own SHA256SUMS.
 # out/redroid-pvr-c2 regenerated 2026-10-30 on the laptop after the script 33 change (Codec2 HAL only with sku=pvr). The context is deterministic: before the change this PC reproduced all 78 build-PC hashes. Re-run script 33 on the build PC before the rsync.
+# out/emmc-dtb rebuilt 2026-10-30 on the laptop: vqmmc no longer named (it pointed at cldo1, not the eMMC rail). Re-run script 16 on the build PC before the rsync.
 ae6116e35485327a244298a9a65897d261204feddaa2a1347ff05a01672598fe  out/deploy/debs/linux-dtb-current-sun60iw2-redroid_1.0-redroid_arm64.deb
 b0a9bcde11d2d11d28de75dd71b4b5c472a92f41df91ece20b0b8c2e932cdb42  out/deploy/debs/linux-headers-current-sun60iw2-redroid_1.0-redroid_arm64.deb
 6273fd078f9262d808b81c4da0fb8584ff57becfba9930d3117704227ea5db91  out/deploy/debs/linux-image-current-sun60iw2-redroid_1.0-redroid_arm64.deb
@@ -9,8 +10,8 @@ b0a9bcde11d2d11d28de75dd71b4b5c472a92f41df91ece20b0b8c2e932cdb42  out/deploy/deb
 11e08779ef28306d6978f538f5f0a7dc4694b003d652689a9d3ad21bac4fd8de  out/deploy/lib/firmware/rgx.fw.36.56.104.183
 71e1b1da9b4c6b42468e378e8b835306920568088bc6669879db4a108a7747c9  out/deploy/lib/firmware/rgx.sh.36.56.104.183
 4a8105f39f3f4c1e6d96d92201dffec2c31aecbdc9039f3ba06a214aaf9f0869  out/redroid-pvr-13-arm64.tar
-be7f012d2a7c24bc2cf8c4dd995365fe46fba82e1484721c59f0c65e71969b4e  out/emmc-dtb/sun60i-a733-orangepi-zero3w-emmc.dtb
-16a06256eed15dc7c17adea630dfdadc3e7b9ce68c065ac091816633844b7952  out/emmc-dtb/sun60i-a733-orangepi-zero4-emmc.dtb
+32966c9b98b0731ca56342d8c4465d39f3b5d5d523fc4b937047ac4261f1e682  out/emmc-dtb/sun60i-a733-orangepi-zero3w-emmc.dtb
+a86337647a25b137c961223e21b801488801ef8b19e67311e5f471e8d3223543  out/emmc-dtb/sun60i-a733-orangepi-zero4-emmc.dtb
 20e265c816af5ae8127b9856bad1eccb177135b3fe8d2374f249eba2365ed2a4  out/route-l/drm_exec.ko
 f355baa4474c075ae60653f3714726595081e0f5169f0e04b3e12e2b7893cb20  out/route-l/drm_shmem_helper.ko
 5687ac1be6862953c06ca6b2c6a1b8daf48824c8c2fd8a56f31c8ba5b844bcba  out/route-l/gpu-sched.ko
