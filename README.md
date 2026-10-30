@@ -1552,6 +1552,13 @@ The rest come from the A733 datasheet V1.01, the Orange Pi 6.6 device tree and A
   - Plan to boot from SD or eMMC and use a used UFS as the root/data disk, unless Orange Pi's "Boot from UFS" works on it as is.
 - **Wear favours a large used UFS for the farm.** 128 GB of TLC has far more total write budget than 16 GB of MLC: about 8× the capacity at roughly ⅓–½ the cycles per cell. If a used 128 GB UFS 3.1 costs about as much as a new 16 GB eMMC, it is the better farm disk. The condition is that UFS works on board day.
 
+**Where the bring-up work actually is (for learning), checked 2026-10-30.** On the Orange Pi BSP the work is done: both controllers are enabled in the DT, and boot0 exists for eMMC and UFS. Soldering plus a DT tweak makes the chip work. The vendor datasheet isn't needed for that, because the host side follows JEDEC, and the chip describes itself (eMMC `EXT_CSD`, UFS descriptors). The learning is elsewhere:
+
+| | Public register docs | Linux today | Real bring-up left |
+|---|---|---|---|
+| eMMC (SMHC2) | **Full**: A733 UM §11.3, about 120 pages, registers plus DMA descriptors; JEDEC JESD84-B51 (free with a JEDEC login) | BSP `sunxi-mmc` with HS200/HS400 tuning and CQE. Mainline: the A733 compatibles are in (2026-08), but mainline `sunxi-mmc` says `TODO: This driver doesn't support HS400 mode yet` | Mainline HS400 for sunxi (the BSP has the data-strobe calibration; DockSeed carries an out-of-tree patch), a mainline board DT, and booting from the eMMC boot partitions (`PARTITION_CONFIG`; the strap order tries `EMMC_USER` then `EMMC_BOOT`) |
+| UFS | **One page**: UM §11.2 is a feature list (Synopsys UFS 3.0 + UniPro 1.8 + M-PHY 4.1, inline crypto), no registers. The standard host interface is JEDEC UFSHCI; UniPro and M-PHY are MIPI specs, members only. | BSP only: `bsp/drivers/ufs/sunxi-ufs-platform.c`, about 2,100 lines on mainline's `ufshcd` core. It is modelled on the mainline Unisoc `ufs-sprd` driver (keeps its `SPRD_UFS_*` names). | Everything Allwinner-specific: raw clock/reset writes (124 `readl`/`writel`), RMMI and M-PHY setup through DME attributes, eFuse calibration words (SID 0x60/0x64), link start-up, gear change to HS-G4. **No mainline driver**: a real driver project (3.9). |
+
 **Datasheets** (`2.docs/storage-datasheets/`, git-ignored; `3.a733-android-farm/scripts/00-fetch-sources.sh storage`, sha256-pinned):
 - Samsung eMMC 5.1 `KLM8G1GETF / KLMAG1JETD / KLMBG2JETD / KLMCG4JETD-B041`, Rev 1.1 (TI E2E), and `KLMBG2JETD` Rev 1.21 (readthedocs mirror):
   - VCC 2.7–3.6 V; VCCQ 1.70–1.95 V or 2.7–3.6 V; HS400;
