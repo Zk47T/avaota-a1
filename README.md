@@ -24,6 +24,8 @@ Nothing has been tried on a real board yet. Steps that depend on hardware behavi
 - the DDR study board ([4.a733-ddr](4.a733-ddr/README.md));
 - the upstream board (3.11).
 
+**A733 mainline checklist and own-commit plan:** [6.a733-mainline](6.a733-mainline/README.md). It marks every block ✅ in mainline, 🔄 someone else's series, ⬜ nobody working, or 🎯 a good own commit. Checked 2026-10-30.
+
 ---
 
 ## 0. Board at a glance
@@ -1608,6 +1610,8 @@ The rest come from the A733 datasheet V1.01, the Orange Pi 6.6 device tree and A
    - For the farm boards, run `55-storage-report.sh` after a day.
 
 ### 3.14 A733 and Zero 3W upstream status, re-checked block by block (2026-10-30)
+
+The tick-box checklist and the own-commit plan built from this section are in [6.a733-mainline](6.a733-mainline/README.md).
 
 **How this was checked:**
 - **Kernel trees, cloned and searched for every `sun60i`, `a733` and `axp318` hit:**
