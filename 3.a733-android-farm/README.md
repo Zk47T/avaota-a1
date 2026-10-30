@@ -518,6 +518,7 @@ All three use the same SoC, kernel (`sun60i-a733-orangepi-{zero3w,zero4,4-pro}.d
 - Mount with `noatime`; run `fstrim` weekly (the controller supports discard).
 - Set journald `Storage=volatile`; cap Docker logs (`--log-opt max-size=10m`).
 - Run `pm trim-caches` daily.
+- Every container boot sets the board's writeback to every 2 s (`vm.dirty_expire_centisecs=200`, 18.2): more, smaller writes to the eMMC. Once the containers have booted, `sudo sysctl vm.dirty_expire_centisecs=3000 vm.dirty_writeback_centisecs=500` puts back the kernel defaults (up to 30 s of `/data` at risk on a power cut). A container restart sets 2 s again. Compare the GB/day from `55-storage-report.sh` with and without it.
 - If the report shows the app's video cache is the big writer, mount a small tmpfs over that one directory before the container starts. The bind mount carries host submounts into the container. This costs RAM, so only do it if the numbers ask for it.
 
 **Fitting the eMMC:**
@@ -1294,7 +1295,7 @@ Sources:
   - the service;
   - the vendor-only libraries it needs: its library closure minus what a redroid vendor process already sees (LLNDK, VNDK, redroid's `/vendor`);
   - the 16 decoder plugins that `libvideoengine` finds by scanning `/vendor/lib64` and loads with `dlopen` (they export `CedarPluginVDInit`);
-  - the rc file, the VINTF fragment, the media XMLs and the seccomp policy.
+  - the rc file, the VINTF entry, the media XMLs and the seccomp policy.
 - It builds a layer `FROM redroid-pvr:13`: 65 libraries, 8.9 MB.
 - **Static link check against the real redroid 13 image: 18 entry points, 0 problems.** The service's load group has 145 libraries and 4,159 imports.
 
@@ -1316,6 +1317,13 @@ The rc file also runs `chmod 0666` on `/dev/cedar_dev*`, `/dev/deinterlace` and 
 - **Route M still plays software-decoded video:**
   - Mesa's PowerVR driver samples NV12 and 3-plane YUV (`G8_B8R8_420`, `G8_B8_R8_420`, `samplerYcbcrConversion`).
   - Zink exposes `GL_OES_EGL_image_external_essl3` (shim probe, 16.14).
+
+**Only in `sku=pvr` containers (changed 2026-10-30, after the switch in 18.1).**
+- The HAL needs Allwinner's IMG gralloc handles. Also, a declared HIDL HAL that never registers makes every `getService()` for it wait forever: here that would be MediaCodecList, so every app that plays video.
+- So script 33 now marks the service `disabled` and starts it on `vendor.redroid.pvr=1`, the same trigger as the IMG allocator (set by `gpu_config.sh` only with `sku=pvr`).
+- Its VINTF entry is appended to Route A's `manifest_pvr.xml` instead of the always-read `manifest/` folder.
+- Without `sku=pvr`, the layer is inert: the c2.allwinner entries in the media XMLs have no component behind them, and apps use `c2.android.*`.
+- The link check is unchanged (18 entry points, 0 problems).
 
 **On the board:** `CODEC2=1 ./40-board-setup.sh run` loads `sunxi-ve` and `deinterlace` and builds `redroid-pvr-c2:13`. See BOARD-DAY step 9.
 

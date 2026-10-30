@@ -1,5 +1,6 @@
 # A733 farm kit, sha256: built on the build PC 2026-10-28, extended 2026-10-29, redroid images rebuilt 2026-10-30 (logs/2026-10-29-board-day-builds/).
 # Verify from the kit folder on the build PC: sha256sum -c KIT-SHA256.txt. On the board, each out/ folder that has one checks with its own SHA256SUMS.
+# out/redroid-pvr-c2 regenerated 2026-10-30 on the laptop after the script 33 change (Codec2 HAL only with sku=pvr). The context is deterministic: before the change this PC reproduced all 78 build-PC hashes. Re-run script 33 on the build PC before the rsync.
 ae6116e35485327a244298a9a65897d261204feddaa2a1347ff05a01672598fe  out/deploy/debs/linux-dtb-current-sun60iw2-redroid_1.0-redroid_arm64.deb
 b0a9bcde11d2d11d28de75dd71b4b5c472a92f41df91ece20b0b8c2e932cdb42  out/deploy/debs/linux-headers-current-sun60iw2-redroid_1.0-redroid_arm64.deb
 6273fd078f9262d808b81c4da0fb8584ff57becfba9930d3117704227ea5db91  out/deploy/debs/linux-image-current-sun60iw2-redroid_1.0-redroid_arm64.deb
@@ -49,10 +50,10 @@ b5c5ca6cd0c03713cc06da83099de7e9b9891c064d0cc56df0507cef107c610e  out/redroid-me
 ccb0a05ba39c0a3324f8372eff23298988d7bb52dfcef9a3df96aeae8449c695  out/redroid-mesa/vendor/lib64/libgallium_dri.so
 defe4f183e5b0d68a35746b458e4e2c2a21c598fa160ec038ab60dc320b666a2  out/redroid-mesa/vendor/lib64/libgbm.so.1
 7a6e9fb83aa4c7cd9b7dcbbca668b0bd31403b9f57099c8edaebe40371fdfc46  out/redroid-pvr-c2/Dockerfile
-e1a93640a9aa7e82cc222fa240b95ff4cc6b3fb581ea8389ae88cd26619be657  out/redroid-pvr-c2/MANIFEST.txt
+847939f0428095dd5d0ae265072b596b5767e4657bef89be97b84be326ca97ad  out/redroid-pvr-c2/MANIFEST.txt
 a2428e08ee2b22f2bfe793503a4c24c0da2cb7f6da9c978d614e5adf9e9cfb1d  out/redroid-pvr-c2/vendor/bin/hw/android.hardware.media.aw.c2@1.0-service
 715741ca0f08603d3ec6f89a12d9a57bdf3d5aa05ced64359f95afcd1d63eb00  out/redroid-pvr-c2/vendor/etc/cedarc.conf
-1f94d560ddb246a305124d428c4661152211e0826275a4bea8eb62f2fa9d94a7  out/redroid-pvr-c2/vendor/etc/init/android.hardware.media.aw.c2@1.0-service.rc
+a290ca4c3e8d4d63549c2e9311bcbd6959a6513a58226a3309f6b2753c11f723  out/redroid-pvr-c2/vendor/etc/init/android.hardware.media.aw.c2@1.0-service.rc
 447ab4a7d53fb6d915634141fbcbec1f875661ee67e7496237b7913746f995fe  out/redroid-pvr-c2/vendor/etc/init/redroid-cedar.rc
 7108ac5553f79bcf1c651e478208ac2796483050b384eaef019c76e6cf7dfea9  out/redroid-pvr-c2/vendor/etc/media_codecs.xml
 9fb457774c42c5764d24025d73705c088e4279aab6e7a9d81b1a95879123a543  out/redroid-pvr-c2/vendor/etc/media_codecs_allwinner_video.xml
@@ -60,7 +61,7 @@ c3acd6442046ac4bd949b5c6f18d79f2707b5bdc677fa8e676bd02a88035ac75  out/redroid-pv
 5eb7a50f9ccbac272ed52258350dd44c51e24edab4c73454993cf968b4b81e39  out/redroid-pvr-c2/vendor/etc/media_codecs_google_video.xml
 91e23b6fd8b6a2f01908b07f6fb4c5d4fd33d0a7479418ca2a36a73adc639647  out/redroid-pvr-c2/vendor/etc/media_codecs_performance.xml
 e6db5338b86ff24e195414981c21b7f60b7ec7478cb79cbee7758cf0ee69b5de  out/redroid-pvr-c2/vendor/etc/seccomp_policy/codec2.vendor.base.policy
-d4d731e4924e67d27d5e1b4fc333dbc7faefe2020d0e49094992bd4173369784  out/redroid-pvr-c2/vendor/etc/vintf/manifest/manifest_media_c2_V1_0_default.xml
+3ae77b031daeba17d0f386bf5a6c6dfba583ff0eb1a4a8b46f30c7161107d8f6  out/redroid-pvr-c2/vendor/etc/vintf/manifest_pvr.xml
 f9da3d855c0b4f76ba882880c2375c913bd96716649f7a7c5063275091497802  out/redroid-pvr-c2/vendor/lib64/android.hardware.media.bufferpool@1.0.so
 7836a856dcdaef42a7b76fd2354c50a334b1369630933968f8783a0125541280  out/redroid-pvr-c2/vendor/lib64/android.hardware.media.c2@1.0.so
 a6ded9ca1a4f3b60f65290db990f7c3a3aee5b67ae5ce6781a49000300d832c0  out/redroid-pvr-c2/vendor/lib64/libMemAdapter.so
@@ -126,7 +127,7 @@ b6eea482ab1d2f6517e102de07120fb291d8d41d3ea7128e7b0c87f6ecff07a7  out/redroid-pv
 44c87d70fa1f9791bdf2e55640b47f7e336d905b9d1b75b0993d302a920ccbcd  out/redroid-pvr-c2/vendor/lib64/libvencoder.so
 a28baca84146f4e5f700f9aec2c740d22e1afcdc68515299bdec75a4aab0026c  out/redroid-pvr-c2/vendor/lib64/libvideoengine.so
 c2558cf5b0a45ead5b07bc922f23c2cbd87340ec6ee903b0b82c04d894647d8c  out/redroid-pvr-c2/vendor/lib64/vendor.hardware.drmheapallocator-V1-ndk.so
-57d7cdd0e505cadf604bebf1dd9ada26ccaffa090a99f13af60efb0b454f3e65  scripts/40-board-setup.sh
+f82372ef259434408f6c05158b011c4e1fb5c6cc846b775f148050be3d7d97eb  scripts/40-board-setup.sh
 5d8ca1c8f3be394319de4ba87ef8d6b06931d71635eaf99999e05c2b062459b7  scripts/41-gpu-open-tests.sh
 1aae9f3f760c7a8d98564f0929f06e902dd8efd0c1694094be922bd7b32517aa  scripts/45-usb-net.sh
 246d62c84710f43e73cce6f6af6dd771709c07868ab5f595de4d00eec68a0ff4  scripts/50-board-report.sh

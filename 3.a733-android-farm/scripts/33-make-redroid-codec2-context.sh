@@ -38,8 +38,28 @@ fi
 
 rm -rf "$C"; mkdir -p "$C/vendor"/{bin/hw,lib64,etc/init,etc/vintf/manifest,etc/seccomp_policy}
 cp "$V/bin/hw/$SVC" "$C/vendor/bin/hw/"
-cp "$V/etc/init/$SVC.rc" "$C/vendor/etc/init/"
-cp "$V/etc/vintf/manifest/manifest_media_c2_V1_0_default.xml" "$C/vendor/etc/vintf/manifest/"
+# Only in sku=pvr containers (README 18.1), like the IMG HALs: the HAL needs Allwinner's IMG
+# gralloc handles, and a declared HIDL HAL that never registers makes every getService() for
+# it wait forever (MediaCodecList, hence every app that plays video). So the service is
+# disabled and started with the IMG allocator (vendor.redroid.pvr=1, set by gpu_config.sh),
+# and its VINTF entry goes into Route A's manifest_pvr.xml, not the always-read manifest/ folder.
+sed "/^service android-hardware-media-aw-c2-hal-1-0 /a\    disabled" "$V/etc/init/$SVC.rc" > "$C/vendor/etc/init/$SVC.rc"
+printf '\non property:vendor.redroid.pvr=1\n    start android-hardware-media-aw-c2-hal-1-0\n' >> "$C/vendor/etc/init/$SVC.rc"
+grep -q '^    disabled' "$C/vendor/etc/init/$SVC.rc"
+PVR=$FARM/out/redroid-pvr/vendor/etc/vintf/manifest_pvr.xml
+[ -f "$PVR" ] || "$FARM/scripts/30-make-redroid-pvr-context.sh"
+python3 -I - "$PVR" "$V/etc/vintf/manifest/manifest_media_c2_V1_0_default.xml" \
+  > "$C/vendor/etc/vintf/manifest_pvr.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+base = ET.parse(sys.argv[1]).getroot()      # Route A's sku=pvr manifest, unchanged
+for hal in ET.parse(sys.argv[2]).getroot().findall("hal"):
+    base.append(hal)
+ET.indent(base)
+sys.stdout.write(ET.tostring(base, encoding="unicode") + "\n")
+PY
+grep -q 'android.hardware.media.c2' "$C/vendor/etc/vintf/manifest_pvr.xml"
+rmdir "$C/vendor/etc/vintf/manifest"
 cp "$V"/etc/media_codecs{,_allwinner_video,_google_audio,_google_video,_performance}.xml \
    "$V/etc/cedarc.conf" "$C/vendor/etc/"
 cp "$V/etc/seccomp_policy/codec2.vendor.base.policy" "$C/vendor/etc/seccomp_policy/"

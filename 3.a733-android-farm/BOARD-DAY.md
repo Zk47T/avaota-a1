@@ -124,6 +124,7 @@ Only the board can decide:
    - **Checks:**
      - Host: `ls -l /dev/cedar_dev /dev/cedar_dev_ve2`.
      - The HAL is running: `adb -s <ip>:5555 shell ps -A | grep media.aw.c2`.
+     - The container runs with `sku=pvr` (`./50-board-report.sh`). Without it, the Codec2 layer stays off by design (README 17.4).
      - The HAL registered: `adb -s <ip>:5555 shell lshal | grep media.c2` should list `IComponentStore/default`.
      - AFBC is off: `adb -s <ip>:5555 shell getprop vendor.codec2.disable.afbc` must print `1`. With AFBC on, video turns green or garbled.
      - Encoder: `adb -s <ip>:5555 shell screenrecord --time-limit 5 /sdcard/t.mp4`, then `adb -s <ip>:5555 logcat -d | grep -E 'Created component|c2\.allwinner'` should show `c2.allwinner.avc.encoder`.

@@ -104,6 +104,10 @@ run)
 
   echo "== 6. two instances: each 1 dedicated A76 + 2 dedicated A55 + 1 shared A55"
   # SHARED_DATA=1: apps installed once in $D/data-base, each instance keeps only its diff
+  # (one Android version only: a /data written by one version must not be used by another)
+  if [ "${SHARED_DATA:-0}" = 1 ] && [ "$(echo "${IMAGE1:-$IMAGE}" | sed 's/.*://')" != "$(echo "${IMAGE2:-$IMAGE}" | sed 's/.*://')" ]; then
+    echo "SHARED_DATA=1 needs the same Android version in both instances (IMAGE1=${IMAGE1:-$IMAGE}, IMAGE2=${IMAGE2:-$IMAGE})"; exit 1
+  fi
   for i in 1 2; do
     if [ $i = 1 ]; then CPUS=1,2,5,6; IMG=${IMAGE1:-$IMAGE}; else CPUS=3,4,5,7; IMG=${IMAGE2:-$IMAGE}; fi
     # A /data written by one Android version must not be reused by another: other images get their own
