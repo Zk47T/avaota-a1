@@ -20,6 +20,13 @@ import urllib.request
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "out", "mainline-watch")
 UA = {"User-Agent": "a733-mainline-watch/1.0"}
 TREES = {"mainline": "torvalds/linux.git", "next": "next/linux-next.git"}
+# bindings an A733 block lands in (merged ones and the ones in review on 2026-10-30)
+BINDINGS = ["arm/sunxi.yaml", "clock/allwinner,sun60i-a733-ccu.yaml", "pinctrl/allwinner,sun55i-a523-pinctrl.yaml",
+            "mmc/allwinner,sun4i-a10-mmc.yaml", "dma/allwinner,sun50i-a64-dma.yaml", "i2c/marvell,mv64xxx-i2c.yaml",
+            "spi/allwinner,sun6i-a31-spi.yaml", "interrupt-controller/allwinner,sun7i-a20-sc-nmi.yaml",
+            "power/allwinner,sun20i-d1-ppu.yaml", "rtc/allwinner,sun6i-a31-rtc.yaml",
+            "serial/snps-dw-apb-uart.yaml", "phy/allwinner,sun50i-a64-usb-phy.yaml",
+            "mfd/x-powers,axp152.yaml", "net/allwinner,sun8i-a83t-emac.yaml", "mailbox/allwinner,sun6i-a31-msgbox.yaml"]
 
 
 def get(url, tries=4):
@@ -62,6 +69,12 @@ def check():
         r[f"{t}: AXP318W in axp20x"] = "AXP318" in axp
         mmc = cgit_plain(t, "drivers/mmc/host/sunxi-mmc.c")
         r[f"{t}: A733 in sunxi-mmc driver"] = "a733" in mmc.lower()
+        # A733 compatibles per binding (main README 3.14): which blocks have landed
+        found = []
+        for b in BINDINGS:
+            if "sun60i-a733" in cgit_plain(t, f"Documentation/devicetree/bindings/{b}"):
+                found.append(b.split("/")[-1].removesuffix(".yaml"))
+        r[f"{t}: bindings with sun60i-a733"] = found or "none"
     fw = get("https://gitlab.com/api/v4/projects/kernel-firmware%2Flinux-firmware/repository/tree?path=powervr&ref=main&per_page=100")
     r["linux-firmware powervr/"] = sorted(re.findall(r'"name":"(rogue_[^"]+)"', fw))
     mesa = get("https://docs.mesa3d.org/drivers/powervr.html")
@@ -98,6 +111,23 @@ def check():
         r["apercel issues (newest 10)"] = js[:80]
     ub = get("https://api.github.com/repos/u-boot/u-boot/contents/arch/arm/mach-sunxi?ref=master")
     r["U-Boot mach-sunxi sun60i/DRAM"] = sorted(set(re.findall(r'"name":"([^"]*(?:sun60i|a733)[^"]*)"', ub))) or "none"
+    js = get("https://patchwork.ozlabs.org/api/patches/?project=uboot&q=a733&order=-date&per_page=3")
+    try:
+        r["U-Boot list, newest A733 patches"] = [f'{p["date"][:10]} {p["state"]} {p["submitter"]["name"]}: {p["name"][:70]}' for p in json.loads(js)]
+    except Exception:
+        r["U-Boot list, newest A733 patches"] = js[:80]
+    tfa = get("https://api.github.com/repos/ARM-software/arm-trusted-firmware/contents/plat/allwinner?ref=master")
+    r["TF-A master plat/allwinner"] = sorted(re.findall(r'"name":"(sun[^"]+)"', tfa))
+    g = get("https://review.trustedfirmware.org/changes/?q=topic:allwinner_a733_support")
+    try:
+        r["TF-A Gerrit topic allwinner_a733_support"] = sorted(f'{c["_number"]} {c["status"]}: {c["subject"][:60]}' for c in json.loads(g.split("\n", 1)[1]))
+    except Exception:
+        r["TF-A Gerrit topic allwinner_a733_support"] = g[:80]
+    ms = get("https://api.github.com/repos/linux-sunxi/meta-sunxi/contents/conf/machine/include?ref=master")
+    r["meta-sunxi SoC includes"] = sorted(re.findall(r'"name":"(sun\d+i[^"]*\.inc)"', ms))
+    ar = get("https://raw.githubusercontent.com/armbian/build/main/config/boards/orangepizero3w.conf")
+    m = re.search(r'KERNEL_TARGET="([^"]+)"', ar)
+    r["Armbian Zero 3W kernel targets"] = m.group(1) if m else ar[:80]
     pw = {}
     for q in ("a733", "axp318", "sun60i", "k3-gpu", "36.56.104", "drm/imagination"):
         js = get(f"https://patchwork.kernel.org/api/1.3/patches/?q={q}&order=-date&per_page=6")

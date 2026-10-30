@@ -1366,6 +1366,8 @@ The cost of an A733 board is running the vendor BSP for a while. Mainline work i
 
 ### 3.11 A733 upstream status, what a Zero 3W owner can contribute, and Yocto
 
+**Re-checked 2026-10-30: section 3.14 is the current status and corrects this section.** It covers the AXP318W authorship and merge state, the Zero 3W having no AXP515, FUSB302 rather than HUSB311, the 26 MHz crystal, TF-A's A733 series in Gerrit, Alastair D'Silva's U-Boot branches, Armbian, and the full per-block table.
+
 **Sources (all read 2026-10-28; GPU, PMIC and pinctrl re-checked 2026-10-29, and `3.a733-android-farm/scripts/60-mainline-watch.py` repeats the checks):**
 - mainline, linux-next and the sunxi `for-next` tree on kernel.org;
 - kernel.org patchwork, the LKML archive and the U-Boot list;
@@ -1409,10 +1411,10 @@ Review notes on the Cubie A7S `.dtsi` v1:
 
 | Item | Value |
 |---|---|
-| PMICs | **AXP8191** in the vendor DT = **AXP318W** on the schematic (main; mainline driver at v8, not merged) + **AXP515** (missing in mainline) |
-| USB-C | power port = USB 2.0 OTG (UDC, also FEL); second port = USB 3.1 OTG (DWC3) + DP alt mode, behind a **HUSB311** driven as `fcs,fusb302` (mainline driver exists) |
+| PMICs | **AXP8191** in the vendor DT = **AXP318W** on the schematic (mainline driver at v8, not merged). The vendor DT's AXP515 is **not fitted** on the Zero 3W (schematic V1.2; 3.14). |
+| USB-C | power port = USB 2.0 OTG (UDC, also FEL); second port = USB 3.1 OTG (DWC3) + DP alt mode, behind a **FUSB302MPX** (`U4`, schematic V1.2 page 11; the vendor DT calls it HUSB311), mainline `fcs,fusb302` |
 | DRAM | LPDDR5, `dram_clk` 2400 MHz (an 1800 MHz boot0 also exists), `tpr10 = 0x325F0000` |
-| Crystal | 24 or 26 MHz `[?]`. The vendor DT defines 19.2/24/26 MHz options. Read it on the vendor image (`grep dcxo /sys/kernel/debug/clk/clk_summary`) or from the schematic. |
+| Crystal | **26 MHz** (`Y1`, 26M-12pF-10ppm, schematic V1.2 page 8; resolved 2026-10-30) |
 | JTAG | PB0–PB3 function 7 (UART2/I2C0 in the DT, probably on the 40-pin header `[?]`); boot0 `enable_jtag` flag |
 | Storage | microSD (SDC0); eMMC (SDC2) and UFS footprints unpopulated |
 | Boot chain on SD | boot0 at 8 KiB; `boot_package` (`u-boot.fex` + `monitor.fex` BL31 + `scp.fex`) at 16,400 KiB |
@@ -1604,6 +1606,120 @@ The rest come from the A733 datasheet V1.01, the Orange Pi 6.6 device tree and A
    - Test: `fio` random 4K and sequential reads and writes, then a long write/verify pass. That is the core of Allwinner's verification guide; the rest is reboot and standby loops and temperature runs.
    - Install: `sudo nand-sata-install` → 2 (eMMC) or 8 (UFS).
    - For the farm boards, run `55-storage-report.sh` after a day.
+
+### 3.14 A733 and Zero 3W upstream status, re-checked block by block (2026-10-30)
+
+**How this was checked:**
+- **Kernel trees, cloned and searched for every `sun60i`, `a733` and `axp318` hit:**
+  - torvalds master `d89e1d186` (2026-10-29; the 7.4 merge window, v7.3 released);
+  - linux-next `next-20261029`;
+  - sunxi `for-next` (2026-10-06).
+- **Kernel patches:** kernel.org patchwork, every patch since April whose name mentions `a733`, `sun60i` or `AXP318`, plus the Cubie and GMAC210 series.
+- **Bootloaders:** U-Boot's patchwork (ozlabs) and TF-A's Gerrit.
+- **Distributions and layers:** GitHub (meta-sunxi, Armbian, SyterKit, community repos).
+- **Board:** the Zero 3W schematic V1.2.
+- **Repeating it:** `3.a733-android-farm/scripts/60-mainline-watch.py` now also re-checks the A733 bindings per tree, the U-Boot list, TF-A Gerrit, meta-sunxi and Armbian.
+
+**Corrections to 3.11:**
+- **PMIC:**
+  - The AXP318W series is by **Andre Przywara**, co-developed and sent by **Jerome Brunet (BayLibre)**. v8 is from 2026-09-10, with `Reviewed-by` from Chen-Yu Tsai and Mark Brown.
+  - It is **not** in the MFD tree (`for-mfd-next`, `for-mfd-next-next`) or linux-next, so 7.5 is the earliest.
+  - **The Zero 3W has only the AXP318W.** The AXP515 in the vendor DT is not on this board (schematic V1.2, pages 1 and 6).
+- **Type-C:** the controller on the Zero 3W V1.2 is `U4` **FUSB302MPX** (page 11). That is mainline's `fcs,fusb302`; the HUSB311 in 3.11 came from the vendor DT.
+- **Crystal:** `Y1` is **26 MHz** (`26M-12pF-10ppm`, TSX-2016, page 8). A `.dtsi` that hard-codes 24 MHz is wrong for the Zero 3W too, as it is for Radxa's boards.
+- **TF-A:** no longer "no port". Gerrit topic `allwinner_a733_support` holds 14 changes:
+  - Jernej Škrabec's generic-GIC, core-count and A523 groundwork, and his A733 support;
+  - Alastair D'Silva's A733 changes: BL31 in DRAM, un-gating the security controllers, NCAT2 core security config.
+  - Posted 2026-10-07, last updated 2026-10-23. Master still has no `sun55i` or `sun60i`.
+- **U-Boot:** **Alastair D'Silva (Inferno Embedded)** has A733 + Orange Pi 4 Pro branches on GitHub (`InfernoEmbedded/u-boot`, branches `upstream-v1-core-bringup` and `for-upstream/*`, 2026-10-08):
+  - CCU, MMC, AXP8191 PMIC, an **LPDDR5 DRAM driver with "open-source PMU firmware"**, DT, and a defconfig;
+  - also DE3.5 + HDMI, the thermal sensor, SPI, PWM, LRADC, the crypto-engine TRNG and a PCIe Gen3 fix.
+  - **Not posted to the U-Boot list yet.** The list still has only Yixun Lan's v3 (2026-01-13, no DRAM).
+  - The DRAM part touches 4.a733-ddr: check how its PMU firmware was produced before relying on it upstream.
+- **Armbian** lists the Zero 3W as a standard board (`config/boards/orangepizero3w.conf`), **vendor kernel only** (`sun60iw2` family: Orange Pi 6.6 kernel + vendor U-Boot 2018.05).
+
+**Linux, block by block.** "Merged" means it is in master on 2026-10-29, so v7.4. linux-next adds nothing for the A733 beyond master.
+
+| Block (what the Zero 3W uses it for) | Mainline | In review (latest) | Elsewhere | Opening |
+|---|---|---|---|---|
+| SoC `.dtsi` + board DTS | **none**, no `sun60i` DTS | Enzo Adriano v1 `.dtsi` + Cubie A7S (2026-06-13), no v2 | Inferno U-Boot DT (A733 + 4 Pro); GrecAndrei, DockSeed, chainsx trees | **Zero 3W DTS** once the `.dtsi` lands |
+| Main CCU + PRCM CCU | none | Junhui Liu **v6** (2026-10-09; "awaiting-upstream" in linux-clk) | | `Tested-by` |
+| RTC + its clock (19.2/24/26 MHz oscillator) | **merged** | | | |
+| Pinctrl, main + R | **merged** | I/O-voltage fields (Vinicius Pedrosa, 10-12); withstand programming **[RFT]** (Andre Przywara, 10-13) | | **Andre asks for testers** |
+| PCK-600 power domains | **merged** | | | |
+| DMA | **merged** | | | |
+| SD + SDIO (SMHC0/1) | **merged**: `sun60i-a733-mmc` → `sun20i-d1-mmc` | | | |
+| eMMC (SMHC2) | **no `-emmc` compatible**; `sunxi-mmc` lacks HS400 ("TODO") | none | BSP; DockSeed HS400 patch | binding + HS400 (3.13) |
+| I2C (PMIC bus), SPI, NMI | **merged**, as compatibles on existing drivers | | | |
+| UART | none | Vinicius Pedrosa v2 (2026-10-19). James Hilliard's `8250_dw` integration series v5 (A523/H616, 2026-10-29) changes the same code. | | test; expect a rebase |
+| PMIC AXP318W | none | v8, as above | Inferno U-Boot AXP8191 | `Tested-by` after a chip-ID check |
+| USB 2.0 PHY | none | Vinicius Pedrosa, 2026-10-29: binding + SIDDQ fix | | test |
+| USB 2.0 controllers (MUSB, EHCI/OHCI) | none (the A523 has its compatibles) | | | small: follow the A523 |
+| USB 3.1 (DWC3 + combo PHY + FUSB302 + DP alt mode) | only the FUSB302 driver | none | BSP | large |
+| Ethernet GMAC210 (Zero 4 / 4 Pro only) | none | Jerome Brunet net-next v3 (2026-09-23), changes requested | | |
+| PCIe Gen3 x1 (DWC + Cadence combo PHY) | none | none | edk2-a733 logs; Inferno U-Boot Gen3 fix | large |
+| Thermal sensors | none (A523 neither) | none | Inferno U-Boot | medium |
+| CPU DVFS | none | none | needs CCU + SID speed bin | medium |
+| Watchdog, SID (eFuse), IOMMU, GPADC, IR, LEDC, I2S, SPDIF | none (**the A523 has all of them**) | none | | small each, once the A523/A733 manuals show the blocks match |
+| LRADC, PWM | none | none | Inferno U-Boot | small |
+| Message box (RISC-V E902) | none | Tim Michals v2 (2026-09-27) | | |
+| Crypto engine | none | none | Inferno U-Boot TRNG | medium |
+| Display (DE3.5, TCON, HDMI, DSI, eDP) | none | none | Inferno U-Boot DE3.5 + HDMI | large |
+| GPU BXM-4-64 | `drm/imagination` present, but 36.56.104.183 isn't in its support list; no Allwinner GPU binding; no firmware in linux-firmware | K3 binding merged for 7.4; `drm/imagination` fixes keep landing | apercel | farm README 16.16 |
+| Video engine, NPU, ISP/CSI | none | none | BSP | large |
+| UFS | none (no Allwinner glue) | none | BSP | large (3.13) |
+| Wi-Fi/BT AIC8800 (module 20800D8) | none | none | vendor driver; a 7.x port (`nickyg666/orangepi-zero3w-aic8800`) | out of tree |
+
+**Booting a mainline kernel now doesn't need mainline firmware.** The vendor boot0 + U-Boot 2018 + BL31 boots an `Image` + DTB with `booti`, and EDK2 boots one through the EFI stub. That is how DockSeed, nickyg666 and edk2-a733 run 6.18/7.x. So kernel patches can be tested on the Zero 3W today.
+
+**Bootloaders:**
+
+| | Mainline | In review | Elsewhere |
+|---|---|---|---|
+| boot0 / SPL + DRAM | none (U-Boot has only the A523 DRAM driver) | Yixun Lan v3 (2026-01, no DRAM) | Inferno LPDDR5 driver (GitHub); SyterKit A7A/A7Z (vendor DRAM blob); vendor boot0 |
+| TF-A | none | Gerrit `allwinner_a733_support` (14 changes) | Inferno/Jernej branches |
+| SyterKit | Cubie A7A, A7Z | | **no Zero 3W board yet** |
+
+**Yocto:**
+- **meta-sunxi master today:** `LAYERSERIES_COMPAT = "wrynose"`, `linux-mainline_6.18.40`, SoC includes up to `sun55i.inc` (Orange Pi 4A, 2026-08). **No `sun60i`.**
+  - Your PR #467 (devicetree install path) was merged on 2026-10-01.
+  - PR #469 is open from **VinicKMx**. That account's name matches the kernel A733 contributor Vinicius Pedrosa, but nothing confirms it is him.
+- **An A733 machine there needs:**
+  - a mainline kernel with the A733 `.dtsi` + CCU + AXP318W + UART, so 7.5–7.6 at the earliest;
+  - U-Boot SPL with A733 DRAM;
+  - TF-A A733.
+  - None of these is merged.
+- **What can be done now:**
+  - Draft `conf/machine/include/sun60i.inc` (`SOC_FAMILY = "sun60i"`, `DEFAULTTUNE = "cortexa76-cortexa55"` from poky's armv8.2-a tunes) and `orange-pi-zero3w.conf` on a branch. Test them with `linux-mainline` plus a bbappend carrying the in-review patches.
+  - Track A (3.11) for the farm.
+- **Nobody has published an A733 Yocto layer** (GitHub search, 2026-10-30). Allwinner's `meta-tina` targets the T736. Armbian and DietPi use the vendor kernel.
+
+**Who is active.**
+- **Contributors:**
+  - Andre Przywara (Arm);
+  - **Jerome Brunet (BayLibre)**: RTC clock, MMC/I2C bindings, GMAC210, the AXP318W sender. BayLibre also builds the open Android for the same GPU, farm README 16.8.
+  - Junhui Liu (CCU);
+  - Vinicius Pedrosa (UART, USB PHY, pinctrl I/O voltage);
+  - Yuanshen Cao (DMA, PCK-600);
+  - Tim Michals (mailbox);
+  - Enzo Adriano (`.dtsi`);
+  - Yixun Lan (U-Boot);
+  - Jernej Škrabec and Alastair D'Silva (TF-A; Alastair also U-Boot).
+- **sunxi maintainers:** Chen-Yu Tsai, Jernej Škrabec, Samuel Holland.
+
+**A contribution queue for the Zero 3W** (replaces the order in 3.11):
+1. **Before the board arrives:**
+   - Build a local tree: master + CCU v6 + the AXP318W v8 + the UART v2 + Enzo's `.dtsi`. Write `sun60i-a733-orangepi-zero3w.dts` with the 26 MHz crystal, FUSB302, AXP318W, SD, SDIO Wi-Fi and UART0, plus the `xunlong,orangepi-zero3w` line in `arm/sunxi.yaml`. Run `make dtbs_check`.
+   - Compare the A523 and A733 manuals (both are in `2.docs`) for the "small" blocks in the table. Every block that matches is a short compatible-plus-DT series.
+   - Draft the meta-sunxi `sun60i.inc` and machine file. Don't submit them yet.
+2. **First week with the board:**
+   - Boot that kernel from the vendor U-Boot.
+   - Send `Tested-by` with boot logs to Andre's [RFT] pinctrl patch, Vinicius's I/O-voltage, UART and USB PHY patches, the CCU v6, and the AXP318W v8 (after reading the chip ID).
+3. **Then:**
+   - The small-compatible series, one at a time.
+   - The board DTS, as soon as the `.dtsi` is accepted.
+   - SyterKit `boards/orangepi-zero3w` (3.11).
+4. **Later, larger:** eMMC (binding + HS400), thermal, CPU DVFS, USB 3, PCIe, UFS, and the GPU enablement (farm README 16.16).
 
 ## 4. Sources
 
