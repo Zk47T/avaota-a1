@@ -12,3 +12,6 @@
 
 # Orange Pi A733 manuals and schematics (3.a733-android-farm/scripts/00-fetch-sources.sh opi)
 2.docs/orangepi-a733/
+
+# eMMC/UFS datasheets, vendor-confidential copies from public hosts (3.a733-android-farm/scripts/00-fetch-sources.sh storage)
+2.docs/storage-datasheets/

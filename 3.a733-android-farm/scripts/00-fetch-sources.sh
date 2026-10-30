@@ -2,8 +2,8 @@
 # Recreate src/ at the exact commits this project was built and checked with.
 # Shallow + sparse: ~2.5 GB download (most of it is the kernel).
 #   ./scripts/00-fetch-sources.sh            all repos
-#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw apercel opi;
-#                                            opi = Orange Pi docs + Android images, only when named)
+#   ./scripts/00-fetch-sources.sh kernel gpu only those groups (groups: kernel gpu ref fw apercel opi storage;
+#                                            opi = Orange Pi docs + Android images, storage = eMMC/UFS datasheets; both only when named)
 set -euo pipefail
 FARM=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$FARM/src"
@@ -89,6 +89,26 @@ drive() {
   curl -fsSL -o "$1" "https://drive.usercontent.google.com/download?id=$2&export=download&confirm=t"
   echo "$3  $1" | sha256sum -c
 }
+# dl FILE URL SHA256: one public file, checked
+dl() {
+  if echo "$3  $1" | sha256sum -c --status 2>/dev/null; then echo "ok    ${1##*/}"; return; fi
+  echo "fetch ${1##*/}"
+  mkdir -p "$(dirname "$1")"
+  curl -fsSL -A 'Mozilla/5.0' -o "$1" "$2"
+  echo "$3  $1" | sha256sum -c
+}
+if want storage; then   # eMMC/UFS datasheets for the Zero 3W / Zero 4 footprints (README 3.13)
+  DS=$FARM/../2.docs/storage-datasheets
+  dl "$DS/Samsung_eMMC5.1_KLMxGxJETD_Rev1.1.pdf" \
+     https://e2e.ti.com/cfs-file/__key/communityserver-discussions-components-files/791/Samsung-eMMC_2D00_2611204514.pdf \
+     c7298e2876faf32827e1754c4a3e53830821886863a7d23484949fe3d8b11326
+  dl "$DS/Samsung_KLMBG2JETD_readthedocs.pdf" \
+     https://smc-storage-chips-datasheets.readthedocs.io/en/latest/emmc/klmbg2jetd-datasheet.pdf \
+     ed9812c09617aaca23bff0bc51da4330562c2945e76522edaaa7986160e9fa60
+  dl "$DS/Kingston_UFS3.1_UFS64G-UFS128-TX17_v1.1_lcsc.pdf" \
+     https://atta.szlcsc.com/upload/public/pdf/source/20240130/0FB2C071753AAB32143AD137C1FB1602.pdf \
+     6276f3c914fe02d3e4e52729d0edc2f2037c233c6909cf977305feb84a8c95c7
+fi
 if want opi; then   # not in the default set: 3.3 GB of images
   # Orange Pi's official A733 documents (README 17.1) and Android images (README 17.2).
   # The images feed scripts/33 (Codec2 HAL) and the DDK 25.1 notes. Checked 2026-10-29.

@@ -1527,11 +1527,41 @@ The rest come from the A733 datasheet V1.01, the Orange Pi 6.6 device tree and A
 | Kingston UFS 3.1, CY14-02J01 family (64/128 GB) | UFS 3.1, VCC 2.4–2.7 V, VCCQ 1.14–1.26 V | Kingston datasheet "UFSnnn CY14 02J01" |
 | Kioxia THGJFGG9T15BAA8 / BAB8 | 64 GB UFS 3.1, automotive, VCCQ 1.14–1.26 V | VCC 2.4–2.7 V or 2.7–3.6 V; 1.2 mm high, while the footprint is drawn for 1.0 mm max: check the clearance |
 | Samsung KLUDG4UHDB-B2D1 | 128 GB UFS 3.1, common on marketplaces | voltages not confirmed; buy only with a datasheet |
+| **Samsung KLUDG4UHGC-B0E1** (checked 2026-10-30) | 128 GB UFS 3.1, G4 2-lane, **"1.2 / 2.5 V"**, 11 × 13 × 0.8 mm, −25…85 °C, mass production | Distributor table (GlobalizeX, 2024-03-19). Samsung's site shows no specs. The body is 0.5 mm narrower than the footprint outline (see below). Siblings: KLUEG8UHGC-B0E1, 256 GB, same data. |
 
 - **UFS 2.1/2.2 parts** (for example Samsung KLUCG4J1ED-B0C1, 64 GB, or Kioxia THGAF8G8T23BAIL, 32 GB) need VCC 2.7–3.6 V plus VCCQ2 1.8 V.
   - On this board that means DLDO6 at 3.3 V and fitting `R1133`.
   - Skip them unless you want that exercise.
 - The A733 runs UFS at up to HS-G4 × 2 lanes. That is far beyond what the farm needs. eMMC is the practical farm storage, UFS the learning exercise.
+
+**KLUDG4UHGC-B0E1 is a good fit, if two checks pass.**
+- What matches: its 1.2 V and 2.5 V rails and its 2-lane HS-G4 interface are exactly what the Zero 3W's UFS footprint and the A733 host provide.
+- **Check 1, the UFS VCC on your board** (C311): it must read 2.5 V.
+- **Check 2, the package.** It is 11 × 13 mm against the 11.5 × 13 mm the footprint is drawn for. Samsung's later UFS packages use that narrower body, and I expect the same JEDEC 153-ball map. Before soldering, lay the chip dry on the pads under the microscope, or compare a photo of its balls with the pads. Then align by the balls, not the silkscreen outline. Buy a stencil that lists 11 × 13.
+- The same two points apply to the Zero 4, which has the same UFS footprint and rails.
+
+**Buying used Samsung chips (the plan).** Samsung is the most common salvage brand, so this is reasonable. Check:
+- **Part number and package**, as above. Only discrete parts: `KLM…` (eMMC) and `KLU…` (UFS). Never `KM…`, the eMCP/uMCP combos.
+- **Wear.** Read it right after the first boot and reject a worn chip:
+  - eMMC: `mmc extcsd read` → `LIFE_TIME_EST_TYP_A/B`, `PRE_EOL_INFO`.
+  - UFS: the health descriptor in sysfs, `…/ufs*/health_descriptor/{life_time_estimation_a,life_time_estimation_b,eol_info}` (Linux ufshcd).
+- **Old data and phone configuration.** Wipe the old data with `blkdiscard`.
+  - A phone UFS keeps its maker's LUN layout. Phone makers usually lock the configuration descriptor (`bConfigDescrLock`), so it can't be re-partitioned.
+  - Linux still sees the big LUN as `/dev/sda`.
+  - **Booting from it is less certain**: the A733 boot ROM must find boot0 where the phone's boot LUN setup puts it.
+  - Plan to boot from SD or eMMC and use a used UFS as the root/data disk, unless Orange Pi's "Boot from UFS" works on it as is.
+- **Wear favours a large used UFS for the farm.** 128 GB of TLC has far more total write budget than 16 GB of MLC: about 8× the capacity at roughly ⅓–½ the cycles per cell. If a used 128 GB UFS 3.1 costs about as much as a new 16 GB eMMC, it is the better farm disk. The condition is that UFS works on board day.
+
+**Datasheets** (`2.docs/storage-datasheets/`, git-ignored; `3.a733-android-farm/scripts/00-fetch-sources.sh storage`, sha256-pinned):
+- Samsung eMMC 5.1 `KLM8G1GETF / KLMAG1JETD / KLMBG2JETD / KLMCG4JETD-B041`, Rev 1.1 (TI E2E), and `KLMBG2JETD` Rev 1.21 (readthedocs mirror):
+  - VCC 2.7–3.6 V; VCCQ 1.70–1.95 V or 2.7–3.6 V; HS400;
+  - 11.5 × 13 × 0.8 mm for 8/16/32 GB, 1.0 mm for 64 GB.
+- Kingston UFS 3.1 `UFS64G/UFS128-TX17-GA3A-DK` v1.1 (LCSC):
+  - the JEDEC UFS 3.1 FBGA153 ball assignment, VCC 2.5 V ± 5 %, VCCQ 1.2 V, HS-G4 2-lane;
+  - 11.5 × 13 mm, 0.8 mm (64 GB) / 1.0 mm (128 GB).
+  - Use it as the UFS 3.1 reference.
+- **Samsung UFS 3.1 (`KLUDG4UH…`): no datasheet is public.** Samsung releases them under NDA, and its product pages show no specs. The numbers above come from a distributor table.
+- The Samsung UFS 2.1 `KLUCG4J1ED-B0C1` sheet is on Arrow's archive (https://static6.arrow.com/aropdfconversion/bdf2cd4578230e91397e04066ac5ecf19bc1e266/klucg4j1ed-b0c1.pdf), which this PC couldn't reach.
 
 **Do not buy:**
 - **Combo packages.** eMCP and uMCP put eMMC or UFS and LPDDR in one package: BGA162/221/254/297, for example Samsung `KMxxx`, SK hynix `H9TQ…`/`H9HQ…`. Many phone-salvage chips are these. Only discrete eMMC (`KLM…`, `THGBM…`, `SDIN…`, `MTFC…`, `H26M…`) or discrete UFS (`KLU…`, `THGAF…`/`THGJF…`, `H28U…`) fits.
